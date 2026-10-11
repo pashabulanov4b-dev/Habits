@@ -1176,13 +1176,16 @@ function openTaskSheet(task = null, date = S.today) {
     <input id="t-title" class="big-input" maxlength="120" placeholder="Що треба зробити?" value="${esc(task ? task.title : '')}" autocomplete="off">
     <div class="field"><label>Коли</label><div class="dchips" data-chips></div></div>
     <div class="mcal" data-cal></div>
-    <div class="field"><label>Час</label><div class="timerow" data-timerow></div></div>
+    <div class="field"><label>Час</label><div class="timerow" data-timerow></div><small class="warn" data-timehint></small></div>
     <div class="field"><label>${IBELL}Нагадування</label><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
     <button class="btn primary block press" data-save></button>
     ${task ? `<div class="row-actions">${task.done ? '' : `<button class="btn block glass press" data-tomorrow>На завтра</button>`}<button class="btn danger block press" data-del>Видалити</button></div>` : ''}
   `, (sheet) => {
     const title = sheet.querySelector('#t-title');
-    const paint = () => {
+    // Перемальовуємо частинами: поля часу НЕ чіпаємо, поки людина в них друкує,
+    // інакше на компʼютері курсор вилітає з поля після першої цифри.
+    const paint = () => { paintDates(); paintTime(); paintRem(true); };
+    const paintDates = () => {
       sheet.querySelector('[data-chips]').innerHTML = chipDates.map((d) =>
         `<button type="button" class="chip glass${d === sel ? ' on' : ''}" data-pick="${d}" aria-pressed="${d === sel}">${chipDay(d)}</button>`).join('');
       // календар
@@ -1202,6 +1205,10 @@ function openTaskSheet(task = null, date = S.today) {
           <button type="button" class="icon-btn small" data-cal-d="1" aria-label="Наступний місяць">${I.right}</button></div>
         <div class="mc-grid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span></div>
         <div class="mc-grid">${cells}</div>`;
+      sheet.querySelector('[data-save]').textContent = (task ? 'Зберегти ' : 'Додати ') + onDay(sel);
+      paintRem(false);
+    };
+    const paintTime = () => {
       // час: початок і (необовʼязково) кінець
       sheet.querySelector('[data-timerow]').innerHTML = !time
         ? `<button type="button" class="tpill" data-add-time>${ICLOCK}<span>Додати час</span></button>`
@@ -1211,17 +1218,21 @@ function openTaskSheet(task = null, date = S.today) {
             ? `<div class="tpill on"><input type="time" value="${endTime}" data-time="end" aria-label="Кінець"><button type="button" class="tclear" data-clear-end aria-label="Без кінця">${I.x}</button></div>`
             : `<button type="button" class="tpill" data-add-end><span>до…</span></button>`}
            <button type="button" class="tclear big" data-clear-time aria-label="Без часу">${I.x}</button>`;
+    };
+    const paintRem = (rebuildCustom) => {
       // нагадування
       const chips = [['off', 'Ні'], ...(time ? OFFSETS : []), ['custom', 'Свій час']];
       sheet.querySelector('[data-remchips]').innerHTML = chips.map(([v, l]) =>
         `<button type="button" class="chip glass${remMode === v ? ' on' : ''}" data-rem="${v}" aria-pressed="${remMode === v}">${l}</button>`).join('');
-      sheet.querySelector('[data-remcustom]').innerHTML = remMode === 'custom'
-        ? `<div class="tpill on">${IBELL}<input type="time" value="${remAt}" data-time="rem" aria-label="Час нагадування"></div>` : '';
+      if (rebuildCustom) {
+        sheet.querySelector('[data-remcustom]').innerHTML = remMode === 'custom'
+          ? `<div class="tpill on">${IBELL}<input type="time" value="${remAt}" data-time="rem" aria-label="Час нагадування"></div>` : '';
+      }
+      sheet.querySelector('[data-timehint]').textContent = time && endTime && endTime <= time ? 'Кінець має бути пізніше за початок' : '';
       const rt = remindTime();
       sheet.querySelector('[data-remhint]').textContent = rt
         ? `Нагадаю ${sel === S.today ? 'сьогодні' : sel === addDays(S.today, 1) ? 'завтра' : fmtDayMonth.format(parseKey(sel))} о ${rt}`
         : time ? 'Без нагадування' : 'Додай час, щоб нагадати «за N хвилин», або вибери свій час';
-      sheet.querySelector('[data-save]').textContent = (task ? 'Зберегти ' : 'Додати ') + onDay(sel);
     };
     sheet.addEventListener('click', (e) => {
       const p = e.target.closest('[data-pick]');
@@ -1243,14 +1254,16 @@ function openTaskSheet(task = null, date = S.today) {
         paint();
       }
     });
-    sheet.addEventListener('change', (e) => {
+    const onTime = (e) => {
       const k = e.target.dataset.time;
-      if (!k || !e.target.value) return;
-      if (k === 'start') { time = e.target.value; if (endTime && endTime <= time) endTime = ''; }
-      if (k === 'end') { endTime = e.target.value > time ? e.target.value : ''; if (!endTime) toast('Кінець має бути пізніше за початок'); }
+      if (!k || !e.target.value) return; // поле ще не дописане — чекаємо
+      if (k === 'start') time = e.target.value;
+      if (k === 'end') endTime = e.target.value;
       if (k === 'rem') remAt = e.target.value;
-      paint();
-    });
+      paintRem(false); // оновлюємо лише підказки, саме поле лишається з курсором
+    };
+    sheet.addEventListener('input', onTime);
+    sheet.addEventListener('change', onTime);
     paint();
     if (!task) setTimeout(() => title.focus(), 350);
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter') sheet.querySelector('[data-save]').click(); });
@@ -1258,6 +1271,7 @@ function openTaskSheet(task = null, date = S.today) {
     sheet.querySelector('[data-save]').addEventListener('click', async () => {
       const txt = title.value.trim();
       if (!txt) { title.focus(); title.style.borderColor = '#FF8A80'; return; }
+      if (time && endTime && endTime <= time) { toast('Кінець має бути пізніше за початок'); return; }
       const rt = remindTime();
       const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt });
       closeSheet();
