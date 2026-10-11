@@ -2,6 +2,9 @@
 // а коли є інтернет — відправляється на сервер і підтягуються зміни з інших пристроїв.
 import { db } from './db.js';
 
+// Що синхронізуємо: назва сховища → поле-ключ запису
+const STORES = [['habits', 'id'], ['marks', 'k'], ['tasks', 'id']];
+
 const listeners = new Set();
 let status = { state: 'idle', lastSync: null, pending: 0 };
 let running = null;
@@ -24,6 +27,8 @@ export async function getUserId() {
   return id;
 }
 
+const readAll = () => Promise.all(STORES.map(([s]) => db.getAll(s)));
+
 // Підключити цей телефон до вже існуючого акаунта (код з іншого пристрою).
 export async function adoptUserId(code) {
   const clean = String(code || '').trim();
@@ -31,14 +36,13 @@ export async function adoptUserId(code) {
   await db.setMeta('userId', clean);
   await db.setMeta('since', 0);
   // Усе, що вже є на телефоні, відправиться в новий акаунт.
-  const [habits, marks] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
-  await db.putMany('habits', habits.map((h) => ({ ...h, dirty: true })));
-  await db.putMany('marks', marks.map((m) => ({ ...m, dirty: true })));
+  const all = await readAll();
+  await Promise.all(STORES.map(([s], i) => db.putMany(s, all[i].map((r) => ({ ...r, dirty: true })))));
 }
 
 export async function countPending() {
-  const [habits, marks] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
-  return habits.filter((h) => h.dirty).length + marks.filter((m) => m.dirty).length;
+  const all = await readAll();
+  return all.reduce((n, list) => n + list.filter((r) => r.dirty).length, 0);
 }
 
 export function scheduleSync(delay = 800) {
@@ -60,45 +64,45 @@ export async function syncNow({ onMerged } = {}) {
     try {
       const userId = await getUserId();
       const since = await db.getMeta('since', 0);
-      const [habits, marks] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
-      const dirtyHabits = habits.filter((h) => h.dirty).map(strip);
-      const dirtyMarks = marks.filter((m) => m.dirty).map(strip);
+      const before = await readAll();
+      const body = { userId, since };
+      const sent = {};
+      STORES.forEach(([s, key], i) => {
+        body[s] = before[i].filter((r) => r.dirty).map(strip);
+        sent[s] = new Set(body[s].map((r) => r[key] + '@' + r.updatedAt));
+      });
 
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, since, habits: dirtyHabits, marks: dirtyMarks })
+        body: JSON.stringify(body)
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
 
       // Перечитуємо локальні записи: поки йшов запит, користувач міг щось змінити.
-      const [lh, lm] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
-      const localH = new Map(lh.map((h) => [h.id, h]));
-      const localM = new Map(lm.map((m) => [m.k, m]));
-      const putH = [];
-      const putM = [];
+      const after = await readAll();
       let changed = false;
+      for (let i = 0; i < STORES.length; i++) {
+        const [s, key] = STORES[i];
+        const local = new Map(after[i].map((r) => [r[key], r]));
+        const out = new Map();
+        (data[s] || []).forEach((srv) => {
+          const loc = local.get(srv[key]);
+          if (!loc || srv.updatedAt > loc.updatedAt) {
+            out.set(srv[key], { ...srv, dirty: false });
+            changed = true;
+          } else if (loc.dirty && srv.updatedAt === loc.updatedAt) {
+            out.set(srv[key], { ...loc, dirty: false }); // сервер прийняв нашу зміну
+          }
+        });
+        // Відправлене й не змінене з того часу — вже не «брудне»
+        after[i].forEach((r) => {
+          if (r.dirty && sent[s].has(r[key] + '@' + r.updatedAt) && !out.has(r[key])) out.set(r[key], { ...r, dirty: false });
+        });
+        await db.putMany(s, [...out.values()]);
+      }
 
-      const mergeInto = (local, server, out) => {
-        if (!local || server.updatedAt > local.updatedAt) {
-          out.push({ ...server, dirty: false });
-          changed = true;
-        } else if (local.dirty && server.updatedAt === local.updatedAt) {
-          out.push({ ...local, dirty: false }); // сервер прийняв нашу зміну
-        }
-      };
-      (data.habits || []).forEach((h) => mergeInto(localH.get(h.id), h, putH));
-      (data.marks || []).forEach((m) => mergeInto(localM.get(m.k), m, putM));
-
-      // Записи, які ми відправили, але сервер має новішу або таку саму версію — вже не "брудні".
-      const sentH = new Set(dirtyHabits.map((h) => h.id + '@' + h.updatedAt));
-      const sentM = new Set(dirtyMarks.map((m) => m.k + '@' + m.updatedAt));
-      lh.forEach((h) => { if (h.dirty && sentH.has(h.id + '@' + h.updatedAt) && !putH.some((x) => x.id === h.id)) putH.push({ ...h, dirty: false }); });
-      lm.forEach((m) => { if (m.dirty && sentM.has(m.k + '@' + m.updatedAt) && !putM.some((x) => x.k === m.k)) putM.push({ ...m, dirty: false }); });
-
-      await db.putMany('habits', putH);
-      await db.putMany('marks', putM);
       await db.setMeta('since', Math.max(0, (data.serverTime || 0) - 5000));
       const lastSync = Date.now();
       await db.setMeta('lastSync', lastSync);

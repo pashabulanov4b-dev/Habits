@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeRecords, changedSince, cleanMark, cleanHabit } from '../api/_lib/merge.js';
-import { isDue, buildMessage, localParts } from '../api/_lib/reminder.js';
+import { mergeRecords, changedSince, cleanMark, cleanHabit, cleanTask } from '../api/_lib/merge.js';
+import { isDue, buildMessage, localParts, dueTasks, taskMessage } from '../api/_lib/reminder.js';
 
 const m = (habitId, date, value, updatedAt) => cleanMark({ habitId, date, value, updatedAt });
 
@@ -81,4 +81,29 @@ test('текст нагадування: тільки невідмічені, н
   assert.match(msg.body, /^Спорт\./);
   const done = buildMessage(habits, { ...marks, 'h-bbbb|2026-10-11': { value: 2 } }, '2026-10-11');
   assert.equal(done, null);
+});
+
+test('завдання: очищення та синхронізація полів', () => {
+  const t = cleanTask({ id: 't-abc123', title: 'Купити квитки', date: '2026-10-12', time: '09:30', remind: true, done: false, order: 1, updatedAt: 5 });
+  assert.deepEqual([t.title, t.date, t.time, t.remind, t.done], ['Купити квитки', '2026-10-12', '09:30', true, false]);
+  assert.equal(cleanTask({ id: 'h-abcd', date: '2026-10-12' }), null);
+  assert.equal(cleanTask({ id: 't-abcd', date: 'завтра' }), null);
+  assert.equal(cleanTask({ id: 't-abcd', date: '2026-10-12', time: '25:00', remind: true }).remind, false);
+});
+
+test('нагадування про завдання: за 15 хв, один раз, тільки з дзвіночком', () => {
+  const tasks = {
+    a: { id: 't-aaaa', title: 'Лікар', date: '2026-10-12', time: '09:30', remind: true },
+    b: { id: 't-bbbb', title: 'Без дзвіночка', date: '2026-10-12', time: '09:30', remind: false },
+    c: { id: 't-cccc', title: 'Зроблено', date: '2026-10-12', time: '09:30', remind: true, done: true },
+    d: { id: 't-dddd', title: 'Завтра', date: '2026-10-13', time: '09:30', remind: true }
+  };
+  const at = (h, m) => ({ date: '2026-10-12', minutes: h * 60 + m });
+  assert.deepEqual(dueTasks(tasks, at(9, 0)), []);
+  assert.deepEqual(dueTasks(tasks, at(9, 15)).map((t) => t.id), ['t-aaaa']);
+  assert.deepEqual(dueTasks(tasks, at(9, 20), { 't-aaaa': '2026-10-12 09:30' }), []);
+  // змінили час — нагадає ще раз
+  assert.equal(dueTasks({ a: { ...tasks.a, time: '10:00' } }, at(9, 45), { 't-aaaa': '2026-10-12 09:30' }).length, 1);
+  assert.equal(taskMessage(tasks.a).title, '09:30 · Лікар');
+  assert.equal(isDue({ enabled: true, daily: false, subs: [{}], time: '20:00', tz: 'UTC' }, Date.UTC(2026, 9, 12, 20, 5)).due, false);
 });

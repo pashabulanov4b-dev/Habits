@@ -1,6 +1,6 @@
 import { db, requestPersistence } from './db.js';
 import { initSync, scheduleSync, syncNow, onSyncStatus, getUserId, adoptUserId } from './sync.js';
-import { isIOS, isStandalone, getNotifySettings, enableNotifications, disableNotifications, updateTime } from './notify.js';
+import { isIOS, isStandalone, getNotifySettings, setDaily, updateTime, ensureTaskPush } from './notify.js';
 
 /* ================= Дати ================= */
 const pad = (n) => String(n).padStart(2, '0');
@@ -30,13 +30,19 @@ const S = {
   monthOffset: 0,
   period: 'week',
   sync: { state: 'idle', pending: 0, lastSync: null },
-  installPrompt: null
+  installPrompt: null,
+  // планувальник
+  tasks: [],
+  planMode: 'day',     // day | ahead | cal
+  planDate: todayKey(),
+  calOffset: 0
 };
 
 async function loadState() {
-  const [habits, marks] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
+  const [habits, marks, tasks] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
   S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null }]));
+  S.tasks = tasks.filter((t) => !t.deleted);
 }
 
 const markOf = (hid, date) => S.marks.get(hid + '|' + date);
@@ -205,12 +211,13 @@ const I = {
 
 /* ================= Навігація ================= */
 const views = document.getElementById('views');
-const TABS = ['today', 'table', 'stats'];
+const TABS = ['today', 'plan', 'table', 'stats'];
 
 function showTab(tab, { animate = true } = {}) {
   S.tab = tab;
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   moveIndicator();
+  planBar.classList.toggle('show', tab === 'plan');
   const old = views.querySelector('.view:not(.leave)');
   const el = document.createElement('section');
   el.className = 'view' + (animate ? ' enter' : '');
@@ -231,14 +238,17 @@ function currentView() { return views.querySelector('.view:not(.leave)'); }
 function renderView(el = currentView()) {
   if (!el) return;
   if (el.dataset.view === 'today') renderToday(el);
+  if (el.dataset.view === 'plan') renderPlan(el);
   if (el.dataset.view === 'table') renderTable(el);
   if (el.dataset.view === 'stats') renderStats(el);
 }
+// Тихе оновлення: без каскадної анімації появи (після відмітки, синхронізації)
 function rerender() {
   const el = currentView();
   if (!el) return;
   const top = el.scrollTop;
   el.classList.remove('enter');
+  el.classList.add('static');
   renderView(el);
   el.scrollTop = top;
 }
@@ -809,7 +819,7 @@ function scoreOfAmount(h, a) {
 function rerenderAnimated() {
   const el = currentView();
   if (!el) return;
-  el.classList.remove('enter');
+  el.classList.remove('enter', 'static');
   renderView(el);
 }
 
@@ -830,8 +840,8 @@ async function openSettings() {
   openSheet(`
     <h2>Налаштування</h2>
     <div class="set-group">
-      <div class="set-row"><div class="l"><b>Нагадування</b><span>${needInstall ? 'Спершу встанови застосунок на початковий екран' : 'Якщо до цього часу не все відмічено'}</span></div>
-        <button class="switch" role="switch" aria-checked="${ns.enabled}" aria-label="Нагадування" data-notify></button></div>
+      <div class="set-row"><div class="l"><b>Нагадування про звички</b><span>${needInstall ? 'Спершу встанови застосунок на початковий екран' : 'Якщо до цього часу не все відмічено'}</span></div>
+        <button class="switch" role="switch" aria-checked="${ns.enabled && ns.daily}" aria-label="Нагадування про звички" data-notify></button></div>
       <div class="set-row"><div class="l"><b>Час</b></div><input type="time" value="${esc(ns.time)}" data-time aria-label="Час нагадування"></div>
     </div>
     <div class="set-group">
@@ -849,12 +859,12 @@ async function openSettings() {
     sw.addEventListener('click', async () => {
       const on = sw.getAttribute('aria-checked') === 'true';
       try {
-        if (on) { await disableNotifications(); sw.setAttribute('aria-checked', 'false'); toast('Нагадування вимкнено'); }
-        else { await enableNotifications(time.value || '20:00'); sw.setAttribute('aria-checked', 'true'); toast('Нагадаю о ' + (time.value || '20:00')); }
+        if (on) { await setDaily(false, time.value || '20:00'); sw.setAttribute('aria-checked', 'false'); toast('Нагадування про звички вимкнено'); }
+        else { await setDaily(true, time.value || '20:00'); sw.setAttribute('aria-checked', 'true'); toast('Нагадаю о ' + (time.value || '20:00')); }
       } catch (e) { toast(e.message || 'Не вдалося'); }
     });
     time.addEventListener('change', async () => {
-      try { const s = await updateTime(time.value); if (s.enabled) toast('Нагадаю о ' + time.value); } catch (e) { toast(e.message); }
+      try { const s = await updateTime(time.value); if (s.enabled && s.daily) toast('Нагадаю о ' + time.value); } catch (e) { toast(e.message); }
     });
     sheet.querySelector('[data-sync-now]').addEventListener('click', () => syncNow({ onMerged: onServerMerge }));
     sheet.querySelector('[data-copy]').addEventListener('click', async () => {
@@ -921,6 +931,307 @@ function popEl(el) {
   el.classList.remove('pop');
   void el.offsetWidth;
   el.classList.add('pop');
+}
+
+/* ================= Планувальник ================= */
+const fmtWdShortDate = new Intl.DateTimeFormat('uk', { weekday: 'short', day: 'numeric', month: 'short' });
+const fmtShortDM = new Intl.DateTimeFormat('uk', { day: 'numeric', month: 'short' });
+const ICAL = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+const IBELL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
+const ISUN = '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const ICLOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+
+const relDay = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.today, 1) ? 'Завтра' : d === addDays(S.today, -1) ? 'Вчора' : cap(fmtWeekday.format(parseKey(d))));
+const onDay = (d) => (d === S.today ? 'на сьогодні' : d === addDays(S.today, 1) ? 'на завтра' : 'на ' + fmtDayMonth.format(parseKey(d)));
+const chipDay = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.today, 1) ? 'Завтра' : `${WD_SHORT[parseKey(d).getDay()]}, ${parseKey(d).getDate()}`);
+const tasksOn = (d) => S.tasks.filter((t) => t.date === d);
+// Невиконане з минулих днів автоматично показується в «Сьогодні» як «Перенесено»
+const carriedTasks = () => S.tasks.filter((t) => t.date < S.today && !t.done).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
+const byTime = (a, b) => ((a.time || '99') < (b.time || '99') ? -1 : (a.time || '99') > (b.time || '99') ? 1 : a.order - b.order);
+function dayState(d) {
+  const l = tasksOn(d);
+  if (!l.length) return null;
+  const open = l.filter((t) => !t.done).length;
+  return { total: l.length, open, cls: !open ? 'done' : d < S.today ? 'late' : 'open' };
+}
+
+async function saveTask(data) {
+  const now = Date.now();
+  let t = data.id ? S.tasks.find((x) => x.id === data.id) : null;
+  const fields = { title: data.title, date: data.date, time: data.time || '', remind: !!(data.remind && data.time) };
+  if (t) {
+    Object.assign(t, fields, { updatedAt: now, dirty: true });
+  } else {
+    const maxOrder = S.tasks.reduce((m, x) => Math.max(m, x.order || 0), 0);
+    t = { id: 't-' + now.toString(36) + Math.random().toString(36).slice(2, 7), ...fields, done: false,
+      order: maxOrder + 1, createdAt: now, updatedAt: now, deleted: false, dirty: true };
+    S.tasks.push(t);
+  }
+  await db.put('tasks', { ...t });
+  scheduleSync();
+  return t;
+}
+async function patchTask(id, patch) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return null;
+  Object.assign(t, patch, { updatedAt: Date.now(), dirty: true });
+  await db.put('tasks', { ...t });
+  if (t.deleted) S.tasks = S.tasks.filter((x) => x.id !== id);
+  scheduleSync();
+  return t;
+}
+
+function planHead(eyebrow, title) {
+  const m = S.planMode;
+  const b = (k, label, extra = '') => `<button role="tab" data-act="plan-mode" data-m="${k}" class="${m === k ? 'on' : ''}" aria-selected="${m === k}" ${extra}>${label}</button>`;
+  return `<div class="plan-top">
+    <div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>${esc(eyebrow)}</div>
+    <div class="head plan-head"><h1>${esc(title)}</h1>
+      <div class="pseg glass" role="tablist" aria-label="Вигляд плану">${b('day', 'День')}${b('ahead', 'Наперед')}${b('cal', ICAL, 'aria-label="Календар"')}</div>
+    </div>
+  </div>`;
+}
+
+function taskRow(t, i, { carried = false, compact = false } = {}) {
+  const meta = carried ? 'Перенесено ' + (t.date === addDays(S.today, -1) ? 'з учора' : 'з ' + fmtShortDM.format(parseKey(t.date))) : '';
+  return `<div class="task${compact ? ' compact' : ' glass'}${t.done ? ' done' : ''}${carried ? ' late' : ''}" data-task="${t.id}" style="--i:${i}">
+    <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
+    <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
+      <span class="tt">${esc(t.title)}</span>${meta ? `<span class="tm">${meta}</span>` : ''}
+    </button>
+    ${t.time ? `<span class="ttime">${t.remind ? IBELL : ''}${t.time}</span>` : ''}
+  </div>`;
+}
+
+function renderPlan(el) {
+  if (S.planMode === 'ahead') renderPlanAhead(el);
+  else if (S.planMode === 'cal') renderPlanCal(el);
+  else renderPlanDay(el);
+  updatePlanBar();
+}
+
+function renderPlanDay(el) {
+  const date = S.planDate;
+  const start = date >= S.today && date <= addDays(S.today, 6) ? S.today : date;
+  const strip = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(start, i);
+    const st = dayState(d);
+    strip.push(`<button class="pday${d === date ? ' sel' : ''}${d === S.today ? ' today' : ''}" data-act="plan-day" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ''}">
+      <span class="wd">${WD_SHORT[parseKey(d).getDay()]}</span><span class="dn">${parseKey(d).getDate()}</span><i class="dot ${st ? st.cls : ''}"></i></button>`);
+  }
+  const list = tasksOn(date);
+  const carried = date === S.today ? carriedTasks() : [];
+  const timed = list.filter((t) => t.time).sort(byTime);
+  const any = list.filter((t) => !t.time).sort((a, b) => a.order - b.order);
+  const total = carried.length + list.length;
+  const done = list.filter((t) => t.done).length;
+  let i = 0;
+  const section = (title, items, opts = {}) => (items.length
+    ? `<div class="tsec"><div class="tsec-h${opts.carried ? ' late' : ''}">${title}</div>${items.map((t) => taskRow(t, i++, opts)).join('')}</div>` : '');
+
+  el.innerHTML = `
+    ${planHead(fmtLong.format(parseKey(date)), relDay(date))}
+    <div class="pstrip">${strip.join('')}<button class="pday cal" data-act="plan-mode" data-m="cal" aria-label="Відкрити календар">${ICAL}</button></div>
+    ${total ? `<div class="pprog"><span>Виконано ${done} з ${total}</span><div class="pbar"><i style="width:${Math.round(done / total * 100)}%"></i></div></div>` : ''}
+    <div class="stagger tlist">
+      ${section('Перенесено', carried, { carried: true })}
+      ${section('За часом', timed)}
+      ${section('Будь-коли', any)}
+    </div>
+    ${total ? '' : `<div class="empty glass">${ISUN}<h2>${date < S.today ? 'Нічого не було' : 'Вільний день'}</h2><p>${date < S.today ? 'На цей день справ не планувалось.' : 'На цей день ще нічого не заплановано. Додай завдання знизу.'}</p></div>`}`;
+}
+
+function renderPlanAhead(el) {
+  const carried = carriedTasks();
+  const dates = [...new Set(S.tasks.filter((t) => t.date >= S.today).map((t) => t.date))].sort();
+  if (carried.length && !dates.includes(S.today)) dates.unshift(S.today);
+  let i = 0;
+  const groups = dates.slice(0, 40).map((d, gi) => {
+    const items = (d === S.today ? carried : []).concat(tasksOn(d).sort(byTime));
+    const open = items.filter((t) => !t.done).length;
+    const sub = d === S.today || d === addDays(S.today, 1) ? fmtWdShortDate.format(parseKey(d)) : fmtDayMonth.format(parseKey(d));
+    return `<div class="tgroup glass" style="--i:${gi}">
+      <div class="tgroup-h"><b class="${d === S.today ? 'lime' : ''}">${relDay(d)}</b><span>${esc(sub)}</span><em>${open ? open + ' ' + plural(open, 'справа', 'справи', 'справ') : 'усе ✓'}</em></div>
+      ${items.map((t) => taskRow(t, i++, { carried: t.date < S.today, compact: true })).join('')}
+    </div>`;
+  }).join('');
+  const last = dates.length ? dates[Math.min(dates.length, 40) - 1] : null;
+  el.innerHTML = `
+    ${planHead(last && last !== S.today ? `${fmtShortDM.format(parseKey(S.today))} – ${fmtShortDM.format(parseKey(last))}` : 'Найближчі справи', 'Наперед')}
+    ${groups ? `<div class="stagger tgroups">${groups}</div>`
+      : `<div class="empty glass">${ISUN}<h2>Наперед порожньо</h2><p>Додай завдання на будь-який день — вони з'являться тут списком по днях.</p></div>`}`;
+}
+
+function renderPlanCal(el) {
+  const t0 = parseKey(S.today);
+  const first = new Date(t0.getFullYear(), t0.getMonth() + S.calOffset, 1);
+  const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const offset = (first.getDay() + 6) % 7;
+  let busy = 0, total = 0;
+  const cells = [];
+  for (let k = 0; k < offset; k++) cells.push('<div></div>');
+  for (let n = 1; n <= days; n++) {
+    const d = keyOf(new Date(first.getFullYear(), first.getMonth(), n));
+    const st = dayState(d);
+    if (st) { busy++; total += st.total; }
+    const dots = st ? Array.from({ length: Math.min(3, st.total) }, () => `<i class="${st.cls}"></i>`).join('') : '';
+    cells.push(`<button class="ccell${st ? ' has' : ''}${d === S.today ? ' today' : ''}${d < S.today ? ' past' : ''}" data-act="plan-open" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ', вільно'}">
+      <span>${n}</span><span class="cdots">${dots}</span></button>`);
+  }
+  const upcoming = S.tasks.filter((t) => !t.done && t.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTime(a, b)))[0];
+  const nextCard = upcoming ? `<button class="nextcard glass press" data-act="plan-open" data-date="${upcoming.date}">
+      <span class="nc-date"><small>${WD_SHORT[parseKey(upcoming.date).getDay()]}</small><b>${parseKey(upcoming.date).getDate()}</b></span>
+      <span class="nc-txt"><small>Найближче · ${esc(relDay(upcoming.date).toLowerCase())}</small><b>${upcoming.time ? upcoming.time + ' · ' : ''}${esc(upcoming.title)}</b></span>
+      ${I.right}</button>` : '';
+  el.innerHTML = `
+    ${planHead('Календар справ · ' + first.getFullYear(), cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
+    <div class="calcard glass">
+      <div class="cal-nav">
+        <button class="icon-btn small press" data-act="cal-nav" data-d="-1" aria-label="Попередній місяць">${I.left}</button>
+        <span>${busy ? `${busy} ${plural(busy, 'день', 'дні', 'днів')} зі справами · ${total} ${plural(total, 'завдання', 'завдання', 'завдань')}` : 'Справ у цьому місяці немає'}</span>
+        <button class="icon-btn small press" data-act="cal-nav" data-d="1" aria-label="Наступний місяць">${I.right}</button>
+      </div>
+      <div class="cgrid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span class="we">Сб</span><span class="we">Нд</span></div>
+      <div class="cgrid">${cells.join('')}</div>
+    </div>
+    <div class="legend"><span><i class="l-open"></i>Заплановано</span><span><i class="l-late"></i>Не виконано</span><span><i class="l-done"></i>Усе зроблено</span></div>
+    ${nextCard}`;
+}
+
+// Поле «Додати…» над меню
+const planBar = document.createElement('button');
+planBar.className = 'planbar';
+planBar.innerHTML = '<span data-l>Додати завдання…</span><i>' + I.plus + '</i>';
+document.getElementById('app').appendChild(planBar);
+planBar.addEventListener('click', () => openTaskSheet(null, S.planMode === 'day' ? S.planDate : S.today));
+function updatePlanBar() {
+  const d = S.planMode === 'day' ? S.planDate : null;
+  planBar.querySelector('[data-l]').textContent = d && d >= S.today ? `Додати ${onDay(d)}…` : 'Додати завдання…';
+}
+
+function openTaskSheet(task = null, date = S.today) {
+  let sel = task ? task.date : (date < S.today ? S.today : date);
+  let time = task ? task.time || '' : '';
+  let remind = task ? !!task.remind : false;
+  const t0 = parseKey(S.today);
+  const monthOff = (d) => { const p = parseKey(d); return (p.getFullYear() - t0.getFullYear()) * 12 + p.getMonth() - t0.getMonth(); };
+  let calOff = Math.max(0, monthOff(sel));
+  const nextMon = addDays(S.today, 7 - ((t0.getDay() + 6) % 7));
+  const chipDates = [...new Set([S.today, addDays(S.today, 1), addDays(S.today, 2), nextMon])];
+
+  openSheet(`
+    <h2>${task ? 'Змінити завдання' : 'Нове завдання'}</h2>
+    <label for="t-title" class="sr-only">Що треба зробити</label>
+    <input id="t-title" class="big-input" maxlength="120" placeholder="Що треба зробити?" value="${esc(task ? task.title : '')}" autocomplete="off">
+    <div class="field"><label>Коли</label><div class="dchips" data-chips></div></div>
+    <div class="mcal" data-cal></div>
+    <div class="tpills"><div class="tpill" data-timebox></div><button type="button" class="tpill" data-remind></button></div>
+    <button class="btn primary block press" data-save></button>
+    ${task ? `<div class="row-actions">${task.done ? '' : `<button class="btn block glass press" data-tomorrow>На завтра</button>`}<button class="btn danger block press" data-del>Видалити</button></div>` : ''}
+  `, (sheet) => {
+    const title = sheet.querySelector('#t-title');
+    const paint = () => {
+      sheet.querySelector('[data-chips]').innerHTML = chipDates.map((d) =>
+        `<button type="button" class="chip glass${d === sel ? ' on' : ''}" data-pick="${d}" aria-pressed="${d === sel}">${chipDay(d)}</button>`).join('');
+      // календар
+      const first = new Date(t0.getFullYear(), t0.getMonth() + calOff, 1);
+      const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+      const off = (first.getDay() + 6) % 7;
+      let cells = '';
+      for (let k = 0; k < off; k++) cells += '<span></span>';
+      for (let n = 1; n <= days; n++) {
+        const d = keyOf(new Date(first.getFullYear(), first.getMonth(), n));
+        const st = dayState(d);
+        cells += `<button type="button" class="mc${d === sel ? ' on' : ''}${d === S.today ? ' today' : ''}${st && d >= S.today ? ' has' : ''}" data-pick="${d}" ${d < S.today ? 'disabled' : ''} aria-label="${esc(fmtLong.format(parseKey(d)))}">${n}</button>`;
+      }
+      sheet.querySelector('[data-cal]').innerHTML = `
+        <div class="mc-head"><button type="button" class="icon-btn small" data-cal-d="-1" ${calOff <= 0 ? 'disabled' : ''} aria-label="Попередній місяць">${I.left}</button>
+          <b>${esc(cap(fmtMonth.format(first).replace(' р.', '')))}</b>
+          <button type="button" class="icon-btn small" data-cal-d="1" aria-label="Наступний місяць">${I.right}</button></div>
+        <div class="mc-grid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span></div>
+        <div class="mc-grid">${cells}</div>`;
+      // час і нагадування
+      sheet.querySelector('[data-timebox]').innerHTML = time
+        ? `${ICLOCK}<input type="time" value="${time}" data-time aria-label="Час"><button type="button" class="tclear" data-clear-time aria-label="Без часу">${I.x}</button>`
+        : `<button type="button" class="tadd" data-add-time>${ICLOCK}<span>Додати час</span></button>`;
+      sheet.querySelector('[data-timebox]').classList.toggle('on', !!time);
+      const rb = sheet.querySelector('[data-remind]');
+      rb.classList.toggle('on', remind && !!time);
+      rb.innerHTML = `${IBELL}<span>${remind && time ? 'Нагадаю о ' + minusMin(time, 15) : 'Нагадати'}</span>`;
+      sheet.querySelector('[data-save]').textContent = (task ? 'Зберегти ' : 'Додати ') + onDay(sel);
+    };
+    sheet.addEventListener('click', (e) => {
+      const p = e.target.closest('[data-pick]');
+      if (p && !p.disabled) { sel = p.dataset.pick; calOff = Math.max(0, monthOff(sel)); paint(); return; }
+      const cd = e.target.closest('[data-cal-d]');
+      if (cd && !cd.disabled) { calOff = Math.max(0, calOff + Number(cd.dataset.calD)); paint(); return; }
+      if (e.target.closest('[data-add-time]')) { time = '09:00'; paint(); setTimeout(() => sheet.querySelector('[data-time]')?.focus(), 50); return; }
+      if (e.target.closest('[data-clear-time]')) { time = ''; remind = false; paint(); return; }
+      if (e.target.closest('[data-remind]')) { remind = !remind; if (remind && !time) time = '09:00'; paint(); }
+    });
+    sheet.addEventListener('change', (e) => { if (e.target.matches('[data-time]')) { time = e.target.value; paint(); } });
+    paint();
+    if (!task) setTimeout(() => title.focus(), 350);
+    title.addEventListener('keydown', (e) => { if (e.key === 'Enter') sheet.querySelector('[data-save]').click(); });
+
+    sheet.querySelector('[data-save]').addEventListener('click', async () => {
+      const txt = title.value.trim();
+      if (!txt) { title.focus(); title.style.borderColor = '#FF8A80'; return; }
+      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, remind });
+      closeSheet();
+      toast(task ? 'Збережено' : `Додано ${onDay(saved.date)}`);
+      if (saved.remind) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));
+      rerenderAnimated();
+    });
+    const tm = sheet.querySelector('[data-tomorrow]');
+    if (tm) tm.addEventListener('click', async () => {
+      const d = addDays(S.today, 1);
+      await patchTask(task.id, { date: d });
+      closeSheet();
+      toast('Перенесено на завтра');
+      rerenderAnimated();
+    });
+    const del = sheet.querySelector('[data-del]');
+    if (del) {
+      let armed = false;
+      del.addEventListener('click', async () => {
+        if (!armed) { armed = true; del.textContent = 'Точно видалити?'; return; }
+        await patchTask(task.id, { deleted: true });
+        closeSheet();
+        toast('Завдання видалено');
+        rerenderAnimated();
+      });
+    }
+  });
+}
+function minusMin(hhmm, m) {
+  const [h, mi] = hhmm.split(':').map(Number);
+  const t = (h * 60 + mi - m + 1440) % 1440;
+  return pad(Math.floor(t / 60)) + ':' + pad(t % 60);
+}
+
+async function toggleTask(id, btn) {
+  const t = S.tasks.find((x) => x.id === id);
+  if (!t) return;
+  const wasAllDone = todayAllDone();
+  // виконане перенесене завдання переїжджає в сьогодні — там його й видно як зроблене
+  const patch = t.done ? { done: false } : { done: true, ...(t.date < S.today ? { date: S.today } : {}) };
+  const row = btn.closest('.task');
+  row?.classList.toggle('done', !t.done);
+  popEl(btn);
+  await patchTask(id, patch);
+  setTimeout(() => {
+    rerender();
+    if (!wasAllDone && todayAllDone() && S.planMode !== 'cal') {
+      confetti(currentView()?.querySelector('.pprog') || null);
+      toast('Усі справи на сьогодні зроблено');
+    }
+  }, 280);
+}
+function todayAllDone() {
+  const l = tasksOn(S.today);
+  return l.length > 0 && l.every((t) => t.done) && carriedTasks().length === 0;
 }
 
 // Конфеті, коли день зараховано або тижнева ціль звички щойно виконана
@@ -1020,6 +1331,26 @@ views.addEventListener('click', async (e) => {
     seg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b === t); b.setAttribute('aria-selected', b === t); });
     placeKnob(currentView());
     setTimeout(() => rerenderAnimated(), 120);
+  } else if (act === 'plan-mode') {
+    if (S.planMode === t.dataset.m) return;
+    S.planMode = t.dataset.m;
+    if (S.planMode === 'cal') { const p = parseKey(S.planDate), n = parseKey(S.today); S.calOffset = (p.getFullYear() - n.getFullYear()) * 12 + p.getMonth() - n.getMonth(); }
+    rerenderAnimated();
+  } else if (act === 'plan-day') {
+    S.planDate = t.dataset.date;
+    rerenderAnimated();
+  } else if (act === 'plan-open') {
+    S.planDate = t.dataset.date;
+    S.planMode = 'day';
+    rerenderAnimated();
+  } else if (act === 'cal-nav') {
+    S.calOffset += Number(t.dataset.d);
+    rerenderAnimated();
+  } else if (act === 'task-toggle') {
+    await toggleTask(t.dataset.id, t);
+  } else if (act === 'task-edit') {
+    const task = S.tasks.find((x) => x.id === t.dataset.id);
+    if (task) openTaskSheet(task);
   } else if (act === 'dismiss-install') {
     localStorage.setItem('installDismissed', '1');
     t.closest('.install').remove();
@@ -1033,6 +1364,7 @@ views.addEventListener('click', async (e) => {
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => {
   if (S.tab === b.dataset.tab) { currentView()?.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (b.dataset.tab === 'today') S.selDate = S.today;
+  if (b.dataset.tab === 'plan') { S.planDate = S.today; S.planMode = 'day'; }
   showTab(b.dataset.tab);
 }));
 window.addEventListener('resize', () => { moveIndicator(); if (S.tab === 'stats') placeKnob(currentView()); });
@@ -1043,6 +1375,7 @@ document.addEventListener('visibilitychange', () => {
   const now = todayKey();
   if (now !== S.today) {
     if (S.selDate === S.today) S.selDate = now;
+    if (S.planDate === S.today) S.planDate = now;
     S.today = now;
     rerenderAnimated();
   }
@@ -1064,6 +1397,10 @@ async function start() {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data && e.data.type === 'open-today') { S.selDate = S.today; showTab('today'); }
+      if (e.data && e.data.type === 'open-tab' && TABS.includes(e.data.tab)) {
+        if (e.data.tab === 'plan') { S.planMode = 'day'; S.planDate = S.today; }
+        showTab(e.data.tab);
+      }
     });
   }
   requestPersistence();

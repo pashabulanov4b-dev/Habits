@@ -24,10 +24,34 @@ const toMin = (t) => {
 // Розклад запускається що ~15 хв і може запізнюватися, тому вікно — 3 години після заданого часу.
 export function isDue(cfg, now) {
   if (!cfg || !cfg.enabled || !cfg.subs || !cfg.subs.length) return { due: false };
+  if (cfg.daily === false) return { due: false, local: localParts(now, cfg.tz) };
   const local = localParts(now, cfg.tz);
   const diff = local.minutes - toMin(cfg.time);
   if (cfg.lastSent === local.date) return { due: false, local };
   return { due: diff >= 0 && diff < 180, local };
+}
+
+/**
+ * Нагадування про завдання планувальника: за 15 хв до часу (розклад іде раз на ~15 хв,
+ * тому вікно — від −20 до +90 хв, щоб не пропустити через затримку).
+ * sent — { taskId: 'YYYY-MM-DD' }, щоб не надсилати двічі.
+ */
+export function dueTasks(tasksAll, local, sent = {}) {
+  return Object.values(tasksAll || {}).map(parse).filter((t) => {
+    if (!t || t.deleted || t.done || !t.remind || t.date !== local.date) return false;
+    if (!/^\d{2}:\d{2}$/.test(t.time || '') || sent[t.id] === t.date + ' ' + t.time) return false;
+    const diff = local.minutes - toMin(t.time);
+    return diff >= -20 && diff <= 90;
+  }).sort((a, b) => (a.time < b.time ? -1 : 1));
+}
+
+export function taskMessage(t) {
+  return {
+    title: `${t.time} · ${t.title}`,
+    body: 'Нагадування з плану на сьогодні',
+    tag: 'task-' + t.id,
+    url: '/?tab=plan'
+  };
 }
 
 export function buildMessage(habitsAll, marksAll, date) {

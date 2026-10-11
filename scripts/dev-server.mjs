@@ -4,7 +4,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { USER_RE, cleanHabit, cleanMark, mergeRecords, changedSince } from '../api/_lib/merge.js';
+import { USER_RE, cleanHabit, cleanMark, cleanTask, mergeRecords, changedSince } from '../api/_lib/merge.js';
 
 const ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const PORT = Number(process.env.PORT || 5173);
@@ -26,13 +26,15 @@ http.createServer(async (req, res) => {
     const b = await body(req);
     if (!USER_RE.test(b.userId || '')) { res.writeHead(400); return res.end('bad'); }
     const now = Date.now();
-    const hk = `u:${b.userId}:h`, mk = `u:${b.userId}:m`;
-    const hW = mergeRecords(hgetall(hk), (b.habits || []).map(cleanHabit).filter(Boolean), (h) => h.id, now);
-    const mW = mergeRecords(hgetall(mk), (b.marks || []).map(cleanMark).filter(Boolean), (m) => m.k, now);
     const s = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, JSON.stringify(v)]));
-    hset(hk, s(hW)); hset(mk, s(mW));
+    const out = { serverTime: now };
+    for (const [name, suffix, clean, idOf] of [['habits', 'h', cleanHabit, (r) => r.id], ['marks', 'm', cleanMark, (r) => r.k], ['tasks', 't', cleanTask, (r) => r.id]]) {
+      const key = `u:${b.userId}:${suffix}`;
+      hset(key, s(mergeRecords(hgetall(key), (b[name] || []).map(clean).filter(Boolean), idOf, now)));
+      out[name] = changedSince(hgetall(key), b.since || 0);
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ serverTime: now, habits: changedSince(hgetall(hk), b.since || 0), marks: changedSince(hgetall(mk), b.since || 0) }));
+    return res.end(JSON.stringify(out));
   }
   if (url.pathname === '/api/_debug') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

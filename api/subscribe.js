@@ -4,7 +4,7 @@ import { USER_RE, parse } from './_lib/merge.js';
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
   if (!redis) return noDb(res);
-  const { userId, subscription, time, tz, enabled } = req.body || {};
+  const { userId, subscription, time, tz, enabled, daily } = req.body || {};
   if (!USER_RE.test(userId || '')) return res.status(400).json({ error: 'bad userId' });
   const endpoint = subscription && typeof subscription.endpoint === 'string' ? subscription.endpoint : null;
   if (!endpoint || !/^https:\/\//.test(endpoint)) return res.status(400).json({ error: 'bad subscription' });
@@ -20,6 +20,8 @@ export default async function handler(req, res) {
     ...cur,
     subs,
     enabled: subs.length > 0,
+    // щоденне нагадування про звички; без поля (старі версії застосунку) — увімкнене
+    daily: typeof daily === 'boolean' ? daily : cur.daily !== false,
     time: /^\d{2}:\d{2}$/.test(time || '') ? time : cur.time,
     tz: typeof tz === 'string' && tz.length < 64 ? tz : cur.tz
   };

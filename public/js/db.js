@@ -1,6 +1,6 @@
 // Локальне сховище на телефоні (IndexedDB). Працює повністю офлайн.
 const DB_NAME = 'habits-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // v2: + сховище tasks (планувальник)
 let dbPromise = null;
 
 function open() {
@@ -12,6 +12,7 @@ function open() {
       if (!db.objectStoreNames.contains('habits')) db.createObjectStore('habits', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('marks')) db.createObjectStore('marks', { keyPath: 'k' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('tasks')) db.createObjectStore('tasks', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

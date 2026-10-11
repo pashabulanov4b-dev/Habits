@@ -36,6 +36,26 @@ export function cleanMark(m) {
   return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), updatedAt: num(m.updatedAt) };
 }
 
+const TASK_RE = /^t-[a-z0-9]{4,40}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// Завдання планувальника
+export function cleanTask(t) {
+  if (!t || !TASK_RE.test(t.id) || !DATE_RE.test(t.date)) return null;
+  return {
+    id: t.id,
+    title: str(t.title, 120),
+    date: t.date,
+    time: TIME_RE.test(t.time || '') ? t.time : '',
+    remind: !!t.remind && TIME_RE.test(t.time || ''),
+    done: !!t.done,
+    order: num(t.order),
+    createdAt: num(t.createdAt),
+    updatedAt: num(t.updatedAt),
+    deleted: !!t.deleted
+  };
+}
+
 export const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 
 /**

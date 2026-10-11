@@ -1,6 +1,6 @@
 // Service worker: застосунок відкривається без інтернету + приймає push-сповіщення.
 // Після зміни списку файлів збільш VERSION.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = 'habits-' + VERSION;
 const SHELL = [
   '/',
@@ -77,7 +77,8 @@ self.addEventListener('notificationclick', (event) => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const c of all) {
       if ('focus' in c) {
-        c.postMessage({ type: 'open-today' });
+        const tab = new URL(target, self.location.origin).searchParams.get('tab') || 'today';
+        c.postMessage({ type: 'open-tab', tab });
         return c.focus();
       }
     }
