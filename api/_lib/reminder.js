@@ -31,24 +31,35 @@ export function isDue(cfg, now) {
   return { due: diff >= 0 && diff < 180, local };
 }
 
+// Коли нагадати про завдання (HH:MM). Старі записи без remindAt — за 15 хв до початку.
+export function remindAtOf(t) {
+  if (!t || !t.remind) return '';
+  if (/^\d{2}:\d{2}$/.test(t.remindAt || '')) return t.remindAt;
+  if (!/^\d{2}:\d{2}$/.test(t.time || '')) return '';
+  const m = Math.max(0, toMin(t.time) - 15);
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+
 /**
- * Нагадування про завдання планувальника: за 15 хв до часу (розклад іде раз на ~15 хв,
- * тому вікно — від −20 до +90 хв, щоб не пропустити через затримку).
- * sent — { taskId: 'YYYY-MM-DD' }, щоб не надсилати двічі.
+ * Нагадування про завдання планувальника — у вибраний користувачем час.
+ * Розклад іде раз на ~15 хв, тому вікно від −7 до +90 хв: трохи раніше краще, ніж на чверть години пізніше.
+ * sent — { taskId: 'YYYY-MM-DD HH:MM' }, щоб не надсилати двічі (зміниш час — нагадає знову).
  */
 export function dueTasks(tasksAll, local, sent = {}) {
   return Object.values(tasksAll || {}).map(parse).filter((t) => {
-    if (!t || t.deleted || t.done || !t.remind || t.date !== local.date) return false;
-    if (!/^\d{2}:\d{2}$/.test(t.time || '') || sent[t.id] === t.date + ' ' + t.time) return false;
-    const diff = local.minutes - toMin(t.time);
-    return diff >= -20 && diff <= 90;
-  }).sort((a, b) => (a.time < b.time ? -1 : 1));
+    if (!t || t.deleted || t.done || t.date !== local.date) return false;
+    const at = remindAtOf(t);
+    if (!at || sent[t.id] === t.date + ' ' + at) return false;
+    const diff = local.minutes - toMin(at);
+    return diff >= -7 && diff <= 90;
+  }).sort((a, b) => (remindAtOf(a) < remindAtOf(b) ? -1 : 1));
 }
 
 export function taskMessage(t) {
+  const range = t.time ? t.time + (t.endTime ? '–' + t.endTime : '') : '';
   return {
-    title: `${t.time} · ${t.title}`,
-    body: 'Нагадування з плану на сьогодні',
+    title: t.title,
+    body: range ? `Сьогодні о ${range}` : 'Нагадування з плану на сьогодні',
     tag: 'task-' + t.id,
     url: '/?tab=plan'
   };

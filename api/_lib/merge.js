@@ -42,12 +42,22 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 // Завдання планувальника
 export function cleanTask(t) {
   if (!t || !TASK_RE.test(t.id) || !DATE_RE.test(t.date)) return null;
+  const time = TIME_RE.test(t.time || '') ? t.time : '';
+  const endTime = time && TIME_RE.test(t.endTime || '') && t.endTime > time ? t.endTime : '';
+  // точний час нагадування; старі версії слали лише remind + time → за 15 хв до початку
+  let remindAt = TIME_RE.test(t.remindAt || '') ? t.remindAt : '';
+  if (!remindAt && t.remind && time) {
+    const m = Math.max(0, Number(time.slice(0, 2)) * 60 + Number(time.slice(3)) - 15);
+    remindAt = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  }
   return {
     id: t.id,
     title: str(t.title, 120),
     date: t.date,
-    time: TIME_RE.test(t.time || '') ? t.time : '',
-    remind: !!t.remind && TIME_RE.test(t.time || ''),
+    time,
+    endTime,
+    remind: !!t.remind && !!remindAt,
+    remindAt: t.remind ? remindAt : '',
     done: !!t.done,
     order: num(t.order),
     createdAt: num(t.createdAt),

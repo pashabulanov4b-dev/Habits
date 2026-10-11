@@ -101,9 +101,26 @@ test('нагадування про завдання: за 15 хв, один р�
   const at = (h, m) => ({ date: '2026-10-12', minutes: h * 60 + m });
   assert.deepEqual(dueTasks(tasks, at(9, 0)), []);
   assert.deepEqual(dueTasks(tasks, at(9, 15)).map((t) => t.id), ['t-aaaa']);
-  assert.deepEqual(dueTasks(tasks, at(9, 20), { 't-aaaa': '2026-10-12 09:30' }), []);
+  assert.deepEqual(dueTasks(tasks, at(9, 20), { 't-aaaa': '2026-10-12 09:15' }), []);
   // змінили час — нагадає ще раз
-  assert.equal(dueTasks({ a: { ...tasks.a, time: '10:00' } }, at(9, 45), { 't-aaaa': '2026-10-12 09:30' }).length, 1);
-  assert.equal(taskMessage(tasks.a).title, '09:30 · Лікар');
+  assert.equal(dueTasks({ a: { ...tasks.a, time: '10:00' } }, at(9, 45), { 't-aaaa': '2026-10-12 09:15' }).length, 1);
+  assert.deepEqual([taskMessage(tasks.a).title, taskMessage(tasks.a).body], ['Лікар', 'Сьогодні о 09:30']);
   assert.equal(isDue({ enabled: true, daily: false, subs: [{}], time: '20:00', tz: 'UTC' }, Date.UTC(2026, 9, 12, 20, 5)).due, false);
+});
+
+test('проміжок часу і свій час нагадування', () => {
+  const t = cleanTask({ id: 't-range1', title: 'Робота', date: '2026-10-12', time: '14:20', endTime: '18:00', remind: true, remindAt: '13:20' });
+  assert.deepEqual([t.time, t.endTime, t.remindAt, t.remind], ['14:20', '18:00', '13:20', true]);
+  // кінець раніше за початок — відкидаємо
+  assert.equal(cleanTask({ id: 't-range2', date: '2026-10-12', time: '14:20', endTime: '10:00' }).endTime, '');
+  // нагадування без часу завдання — можна
+  const n = cleanTask({ id: 't-notime', title: 'Подзвонити', date: '2026-10-12', remind: true, remindAt: '11:00' });
+  assert.deepEqual([n.time, n.remind, n.remindAt], ['', true, '11:00']);
+  // стара версія застосунку: remind без remindAt → за 15 хв
+  assert.equal(cleanTask({ id: 't-old111', date: '2026-10-12', time: '09:30', remind: true }).remindAt, '09:15');
+  const at = (h, m) => ({ date: '2026-10-12', minutes: h * 60 + m });
+  assert.equal(dueTasks({ n }, at(11, 2)).length, 1);
+  assert.equal(dueTasks({ t }, at(13, 20)).length, 1);
+  assert.equal(dueTasks({ t }, at(13, 0)).length, 0);
+  assert.equal(taskMessage(t).body, 'Сьогодні о 14:20–18:00');
 });

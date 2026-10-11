@@ -1,7 +1,7 @@
 import webpush from 'web-push';
 import { redis, keys, noDb } from './_lib/redis.js';
 import { parse } from './_lib/merge.js';
-import { isDue, buildMessage, localParts, dueTasks, taskMessage } from './_lib/reminder.js';
+import { isDue, buildMessage, localParts, dueTasks, taskMessage, remindAtOf } from './_lib/reminder.js';
 
 // Викликається за розкладом (GitHub Actions кожні ~15 хв) з заголовком Authorization: Bearer CRON_SECRET.
 // Надсилає: щоденне нагадування про звички + нагадування про завдання з дзвіночком.
@@ -35,7 +35,7 @@ export default async function handler(req, res) {
     // 2) завдання з дзвіночком
     const sentTasks = Object.fromEntries(Object.entries(cfg.taskSent || {}).filter(([, v]) => String(v).startsWith(local.date)));
     const tasks = dueTasks(await redis.hgetall(keys.tasks(uid)), local, sentTasks);
-    tasks.forEach((t) => { msgs.push(taskMessage(t)); sentTasks[t.id] = t.date + ' ' + t.time; });
+    tasks.forEach((t) => { msgs.push(taskMessage(t)); sentTasks[t.id] = t.date + ' ' + remindAtOf(t); });
     next.taskSent = sentTasks;
 
     if (!msgs.length && next.lastSent === cfg.lastSent) continue;

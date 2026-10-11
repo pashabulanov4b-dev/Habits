@@ -534,3 +534,20 @@ svg { display: block; }
 .tpill.on { padding: 0 6px 0 12px; justify-content: flex-start; }
 .tclear { width: 32px; height: 32px; border-radius: 16px; display: grid; place-items: center; background: rgba(255,255,255,.1); }
 .tclear svg { width: 14px; height: 14px; stroke: var(--text); }
+
+/* ---------- Час «з–до» та нагадування ---------- */
+.field > label { display: flex; align-items: center; gap: 6px; }
+.field > label svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.timerow { display: flex; align-items: center; gap: 8px; }
+.timerow .tpill { flex: 1 1 0; }
+.timerow > .tpill:only-child { flex: 1; }
+.tdash { font-weight: 800; color: var(--muted); }
+.tpill input[type=time] { text-align: left; }
+.tclear.big { width: 40px; height: 40px; border-radius: 20px; flex-shrink: 0; }
+.dchips.rem .chip { min-height: 38px; padding: 0 12px; font-size: 13px; }
+.remcustom:empty { display: none; }
+.remcustom .tpill { max-width: 160px; }
+.tm.soft { color: var(--muted); }
+.task.now { border-color: var(--lime-line); background: rgba(212,245,122,.08); }
+.task.now .tm { color: var(--lime); }
+.ttime.range { font-size: 12px; }

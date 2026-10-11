@@ -947,6 +947,11 @@ const chipDay = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.tod
 const tasksOn = (d) => S.tasks.filter((t) => t.date === d);
 // Невиконане з минулих днів автоматично показується в «Сьогодні» як «Перенесено»
 const carriedTasks = () => S.tasks.filter((t) => t.date < S.today && !t.done).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
+const timeRange = (t) => (t.time ? t.time + (t.endTime ? '–' + t.endTime : '') : '');
+// коли нагадати: точний час; старі завдання без remindAt — за 15 хв до початку
+const remindAtOf = (t) => (!t.remind ? '' : t.remindAt || (t.time ? minusMin(t.time, 15) : ''));
+const nowHM = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const isNow = (t) => t.date === S.today && t.time && t.endTime && !t.done && nowHM() >= t.time && nowHM() < t.endTime;
 const byTime = (a, b) => ((a.time || '99') < (b.time || '99') ? -1 : (a.time || '99') > (b.time || '99') ? 1 : a.order - b.order);
 function dayState(d) {
   const l = tasksOn(d);
@@ -958,7 +963,10 @@ function dayState(d) {
 async function saveTask(data) {
   const now = Date.now();
   let t = data.id ? S.tasks.find((x) => x.id === data.id) : null;
-  const fields = { title: data.title, date: data.date, time: data.time || '', remind: !!(data.remind && data.time) };
+  const time = data.time || '';
+  const endTime = time && data.endTime && data.endTime > time ? data.endTime : '';
+  const remindAt = data.remind ? data.remindAt || '' : '';
+  const fields = { title: data.title, date: data.date, time, endTime, remind: !!remindAt, remindAt };
   if (t) {
     Object.assign(t, fields, { updatedAt: now, dirty: true });
   } else {
@@ -994,12 +1002,15 @@ function planHead(eyebrow, title) {
 
 function taskRow(t, i, { carried = false, compact = false } = {}) {
   const meta = carried ? 'Перенесено ' + (t.date === addDays(S.today, -1) ? 'з учора' : 'з ' + fmtShortDM.format(parseKey(t.date))) : '';
-  return `<div class="task${compact ? ' compact' : ' glass'}${t.done ? ' done' : ''}${carried ? ' late' : ''}" data-task="${t.id}" style="--i:${i}">
+  const now = isNow(t);
+  const rem = remindAtOf(t);
+  const sub = meta || (now ? 'Зараз · до ' + t.endTime : '') || (!compact && rem && !t.done ? 'Нагадаю о ' + rem : '');
+  return `<div class="task${compact ? ' compact' : ' glass'}${t.done ? ' done' : ''}${carried ? ' late' : ''}${now ? ' now' : ''}" data-task="${t.id}" style="--i:${i}">
     <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
     <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
-      <span class="tt">${esc(t.title)}</span>${meta ? `<span class="tm">${meta}</span>` : ''}
+      <span class="tt">${esc(t.title)}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
     </button>
-    ${t.time ? `<span class="ttime">${t.remind ? IBELL : ''}${t.time}</span>` : ''}
+    ${t.time || rem ? `<span class="ttime${t.endTime ? ' range' : ''}">${rem ? IBELL : ''}${timeRange(t)}</span>` : ''}
   </div>`;
 }
 
@@ -1082,7 +1093,7 @@ function renderPlanCal(el) {
   const upcoming = S.tasks.filter((t) => !t.done && t.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTime(a, b)))[0];
   const nextCard = upcoming ? `<button class="nextcard glass press" data-act="plan-open" data-date="${upcoming.date}">
       <span class="nc-date"><small>${WD_SHORT[parseKey(upcoming.date).getDay()]}</small><b>${parseKey(upcoming.date).getDate()}</b></span>
-      <span class="nc-txt"><small>Найближче · ${esc(relDay(upcoming.date).toLowerCase())}</small><b>${upcoming.time ? upcoming.time + ' · ' : ''}${esc(upcoming.title)}</b></span>
+      <span class="nc-txt"><small>Найближче · ${esc(relDay(upcoming.date).toLowerCase())}</small><b>${upcoming.time ? timeRange(upcoming) + ' · ' : ''}${esc(upcoming.title)}</b></span>
       ${I.right}</button>` : '';
   el.innerHTML = `
     ${planHead('Календар справ · ' + first.getFullYear(), cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
@@ -1113,7 +1124,18 @@ function updatePlanBar() {
 function openTaskSheet(task = null, date = S.today) {
   let sel = task ? task.date : (date < S.today ? S.today : date);
   let time = task ? task.time || '' : '';
-  let remind = task ? !!task.remind : false;
+  let endTime = task ? task.endTime || '' : '';
+  // нагадування: 'off' | хвилин до початку (0, 5, 15…) | 'custom' (свій точний час)
+  const OFFSETS = [[0, 'На початку'], [5, 'за 5 хв'], [15, 'за 15 хв'], [30, 'за 30 хв'], [60, 'за 1 год'], [120, 'за 2 год']];
+  const toMin = (hm) => { const [h, m] = hm.split(':').map(Number); return h * 60 + m; };
+  let remMode = 'off';
+  let remAt = '';
+  if (task && task.remind) {
+    remAt = remindAtOf(task);
+    const off = time && remAt ? toMin(time) - toMin(remAt) : null;
+    remMode = OFFSETS.some(([m]) => m === off) ? off : 'custom';
+  }
+  const remindTime = () => (remMode === 'off' ? '' : remMode === 'custom' ? remAt : time ? minusMin(time, remMode) : '');
   const t0 = parseKey(S.today);
   const monthOff = (d) => { const p = parseKey(d); return (p.getFullYear() - t0.getFullYear()) * 12 + p.getMonth() - t0.getMonth(); };
   let calOff = Math.max(0, monthOff(sel));
@@ -1126,7 +1148,8 @@ function openTaskSheet(task = null, date = S.today) {
     <input id="t-title" class="big-input" maxlength="120" placeholder="Що треба зробити?" value="${esc(task ? task.title : '')}" autocomplete="off">
     <div class="field"><label>Коли</label><div class="dchips" data-chips></div></div>
     <div class="mcal" data-cal></div>
-    <div class="tpills"><div class="tpill" data-timebox></div><button type="button" class="tpill" data-remind></button></div>
+    <div class="field"><label>Час</label><div class="timerow" data-timerow></div></div>
+    <div class="field"><label>${IBELL}Нагадування</label><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
     <button class="btn primary block press" data-save></button>
     ${task ? `<div class="row-actions">${task.done ? '' : `<button class="btn block glass press" data-tomorrow>На завтра</button>`}<button class="btn danger block press" data-del>Видалити</button></div>` : ''}
   `, (sheet) => {
@@ -1151,14 +1174,25 @@ function openTaskSheet(task = null, date = S.today) {
           <button type="button" class="icon-btn small" data-cal-d="1" aria-label="Наступний місяць">${I.right}</button></div>
         <div class="mc-grid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Нд</span></div>
         <div class="mc-grid">${cells}</div>`;
-      // час і нагадування
-      sheet.querySelector('[data-timebox]').innerHTML = time
-        ? `${ICLOCK}<input type="time" value="${time}" data-time aria-label="Час"><button type="button" class="tclear" data-clear-time aria-label="Без часу">${I.x}</button>`
-        : `<button type="button" class="tadd" data-add-time>${ICLOCK}<span>Додати час</span></button>`;
-      sheet.querySelector('[data-timebox]').classList.toggle('on', !!time);
-      const rb = sheet.querySelector('[data-remind]');
-      rb.classList.toggle('on', remind && !!time);
-      rb.innerHTML = `${IBELL}<span>${remind && time ? 'Нагадаю о ' + minusMin(time, 15) : 'Нагадати'}</span>`;
+      // час: початок і (необовʼязково) кінець
+      sheet.querySelector('[data-timerow]').innerHTML = !time
+        ? `<button type="button" class="tpill" data-add-time>${ICLOCK}<span>Додати час</span></button>`
+        : `<div class="tpill on">${ICLOCK}<input type="time" value="${time}" data-time="start" aria-label="Початок"></div>
+           <span class="tdash">–</span>
+           ${endTime
+            ? `<div class="tpill on"><input type="time" value="${endTime}" data-time="end" aria-label="Кінець"><button type="button" class="tclear" data-clear-end aria-label="Без кінця">${I.x}</button></div>`
+            : `<button type="button" class="tpill" data-add-end><span>до…</span></button>`}
+           <button type="button" class="tclear big" data-clear-time aria-label="Без часу">${I.x}</button>`;
+      // нагадування
+      const chips = [['off', 'Ні'], ...(time ? OFFSETS : []), ['custom', 'Свій час']];
+      sheet.querySelector('[data-remchips]').innerHTML = chips.map(([v, l]) =>
+        `<button type="button" class="chip glass${remMode === v ? ' on' : ''}" data-rem="${v}" aria-pressed="${remMode === v}">${l}</button>`).join('');
+      sheet.querySelector('[data-remcustom]').innerHTML = remMode === 'custom'
+        ? `<div class="tpill on">${IBELL}<input type="time" value="${remAt}" data-time="rem" aria-label="Час нагадування"></div>` : '';
+      const rt = remindTime();
+      sheet.querySelector('[data-remhint]').textContent = rt
+        ? `Нагадаю ${sel === S.today ? 'сьогодні' : sel === addDays(S.today, 1) ? 'завтра' : fmtDayMonth.format(parseKey(sel))} о ${rt}`
+        : time ? 'Без нагадування' : 'Додай час, щоб нагадати «за N хвилин», або вибери свій час';
       sheet.querySelector('[data-save]').textContent = (task ? 'Зберегти ' : 'Додати ') + onDay(sel);
     };
     sheet.addEventListener('click', (e) => {
@@ -1166,11 +1200,29 @@ function openTaskSheet(task = null, date = S.today) {
       if (p && !p.disabled) { sel = p.dataset.pick; calOff = Math.max(0, monthOff(sel)); paint(); return; }
       const cd = e.target.closest('[data-cal-d]');
       if (cd && !cd.disabled) { calOff = Math.max(0, calOff + Number(cd.dataset.calD)); paint(); return; }
-      if (e.target.closest('[data-add-time]')) { time = '09:00'; paint(); setTimeout(() => sheet.querySelector('[data-time]')?.focus(), 50); return; }
-      if (e.target.closest('[data-clear-time]')) { time = ''; remind = false; paint(); return; }
-      if (e.target.closest('[data-remind]')) { remind = !remind; if (remind && !time) time = '09:00'; paint(); }
+      if (e.target.closest('[data-add-time]')) { time = '09:00'; paint(); return; }
+      if (e.target.closest('[data-add-end]')) { endTime = minusMin(time, -60); if (endTime <= time) endTime = '23:59'; paint(); return; }
+      if (e.target.closest('[data-clear-end]')) { endTime = ''; paint(); return; }
+      if (e.target.closest('[data-clear-time]')) {
+        if (remMode !== 'off' && remMode !== 'custom') { remAt = remindTime(); remMode = remAt ? 'custom' : 'off'; }
+        time = ''; endTime = ''; paint(); return;
+      }
+      const r = e.target.closest('[data-rem]');
+      if (r) {
+        const v = r.dataset.rem;
+        remMode = v === 'off' || v === 'custom' ? v : Number(v);
+        if (remMode === 'custom' && !remAt) remAt = time ? minusMin(time, 15) : '09:00';
+        paint();
+      }
     });
-    sheet.addEventListener('change', (e) => { if (e.target.matches('[data-time]')) { time = e.target.value; paint(); } });
+    sheet.addEventListener('change', (e) => {
+      const k = e.target.dataset.time;
+      if (!k || !e.target.value) return;
+      if (k === 'start') { time = e.target.value; if (endTime && endTime <= time) endTime = ''; }
+      if (k === 'end') { endTime = e.target.value > time ? e.target.value : ''; if (!endTime) toast('Кінець має бути пізніше за початок'); }
+      if (k === 'rem') remAt = e.target.value;
+      paint();
+    });
     paint();
     if (!task) setTimeout(() => title.focus(), 350);
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter') sheet.querySelector('[data-save]').click(); });
@@ -1178,7 +1230,8 @@ function openTaskSheet(task = null, date = S.today) {
     sheet.querySelector('[data-save]').addEventListener('click', async () => {
       const txt = title.value.trim();
       if (!txt) { title.focus(); title.style.borderColor = '#FF8A80'; return; }
-      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, remind });
+      const rt = remindTime();
+      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt });
       closeSheet();
       toast(task ? 'Збережено' : `Додано ${onDay(saved.date)}`);
       if (saved.remind) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));
