@@ -10,6 +10,12 @@ export function localParts(now, tz) {
   return { date: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
 }
 
+const shift = (date, days) => {
+  const d = new Date(date + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
 const toMin = (t) => {
   const m = /^(\d{1,2}):(\d{2})$/.exec(t || '');
   return m ? Number(m[1]) * 60 + Number(m[2]) : 20 * 60;
@@ -27,9 +33,21 @@ export function isDue(cfg, now) {
 export function buildMessage(habitsAll, marksAll, date) {
   const habits = Object.values(habitsAll || {}).map(parse).filter((h) => !h.deleted && h.start <= date);
   if (!habits.length) return null;
+  const done = (h, d) => { const m = marksAll && marksAll[h.id + '|' + d]; return !!(m && parse(m).value > 0); };
   const left = habits.filter((h) => {
-    const m = marksAll && marksAll[h.id + '|' + date];
-    return !(m && parse(m).value > 0);
+    if (done(h, date)) return false;
+    const pw = h.perWeek >= 1 && h.perWeek <= 6 ? h.perWeek : 7;
+    if (pw === 7) return true;
+    // Тижнева звичка: нагадуємо, лише якщо без сьогоднішнього дня ціль тижня вже не встигнути
+    const dow = (new Date(date + 'T00:00:00Z').getUTCDay() + 6) % 7; // 0 = понеділок
+    const ws = shift(date, -dow);
+    let count = 0;
+    for (let i = 0; i < dow; i++) { const d = shift(ws, i); if (d >= h.start && done(h, d)) count++; }
+    const from = h.start > ws ? h.start : ws;
+    const avail = 7 - Math.round((Date.parse(from) - Date.parse(ws)) / 864e5);
+    const need = Math.min(pw, avail) - count;
+    const daysLeft = 7 - dow; // разом із сьогодні
+    return need > 0 && need >= daysLeft;
   });
   if (!left.length) return null;
   const names = left.slice(0, 3).map((h) => h.name).join(', ') + (left.length > 3 ? '…' : '');

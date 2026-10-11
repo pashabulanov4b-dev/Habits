@@ -39,6 +39,22 @@ test('кількість зберігається при синхронізац�
   assert.equal(cleanHabit({ id: 'h-abcd', name: 'x', kind: 'evil' }).kind, 'check');
 });
 
+test('тижнева звичка: нагадування лише коли інакше не встигнути', () => {
+  // 2026-10-11 — неділя. Спорт 3×/тиж, створено задовго до цього.
+  const habits = { 'h-sport': { id: 'h-sport', name: 'Спорт', start: '2026-09-01', perWeek: 3 } };
+  const mk = (...days) => Object.fromEntries(days.map((d) => ['h-sport|' + d, { value: 2 }]));
+  // уже 3 рази цього тижня → не нагадуємо
+  assert.equal(buildMessage(habits, mk('2026-10-05', '2026-10-07', '2026-10-09'), '2026-10-11'), null);
+  // 2 рази, сьогодні останній день → треба сьогодні
+  assert.match(buildMessage(habits, mk('2026-10-05', '2026-10-07'), '2026-10-11').body, /^Спорт/);
+  // середа, ще жодного разу: треба 3, лишилось 5 днів → не нагадуємо
+  assert.equal(buildMessage(habits, {}, '2026-10-07'), null);
+  // п'ятниця, 0 разів: треба 3, лишилось 3 дні → нагадуємо
+  assert.notEqual(buildMessage(habits, {}, '2026-10-09'), null);
+  assert.equal(cleanHabit({ id: 'h-abcd', perWeek: 3 }).perWeek, 3);
+  assert.equal(cleanHabit({ id: 'h-abcd', perWeek: 99 }).perWeek, 7);
+});
+
 test('часовий пояс рахується правильно', () => {
   const t = Date.UTC(2026, 9, 11, 18, 5); // 18:05 UTC = 20:05 у Берліні (літній час)
   assert.deepEqual(localParts(t, 'Europe/Berlin'), { date: '2026-10-11', minutes: 20 * 60 + 5 });

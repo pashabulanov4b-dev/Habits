@@ -21,6 +21,7 @@ export function cleanHabit(h) {
     target: amount(h.target),
     minAmount: amount(h.minAmount),
     unit: str(h.unit, 20),
+    perWeek: Number.isInteger(h.perWeek) && h.perWeek >= 1 && h.perWeek <= 7 ? h.perWeek : 7,
     order: num(h.order),
     start: DATE_RE.test(h.start) ? h.start : '1970-01-01',
     createdAt: num(h.createdAt),

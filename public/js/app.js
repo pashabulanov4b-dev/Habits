@@ -81,18 +81,53 @@ function scoreOf(h, date) {
   return m.value === 2 ? 1 : m.value === 1 ? 0.5 : 0;
 }
 
+/* ===== Частота: щодня або N разів на тиждень ===== */
+// perWeek 1…6 = тижнева звичка; 7 (або нічого) = щодня
+const perWeek = (h) => (h && h.perWeek >= 1 && h.perWeek <= 6 ? h.perWeek : 7);
+const isDaily = (h) => perWeek(h) === 7;
+const weekStart = (date) => addDays(date, -((parseKey(date).getDay() + 6) % 7)); // понеділок
+const dailyOn = (date) => activeOn(date).filter(isDaily);
+// Скільки разів зроблено за тиждень, що починається з ws (рахуються лише дні до сьогодні)
+function weekDone(h, ws) {
+  let n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(ws, i);
+    if (d > S.today) break;
+    if (d >= h.start && val(h.id, d) > 0) n++;
+  }
+  return n;
+}
+// Скільки треба за цей тиждень. Якщо звичку створено посеред тижня — менше, щоб ціль була досяжна.
+function weekNeed(h, ws) {
+  const from = h.start > ws ? h.start : ws;
+  const avail = Math.max(0, 7 - Math.round((parseKey(from) - parseKey(ws)) / 864e5));
+  return Math.min(perWeek(h), avail);
+}
+const weekMet = (h, ws) => { const need = weekNeed(h, ws); return need > 0 && weekDone(h, ws) >= need; };
+
+// Щоденний відсоток рахується тільки з щоденних звичок:
+// тижнева звичка не «псує» день, коли ти за планом відпочиваєш.
 function dayScore(date) {
-  const hs = activeOn(date);
+  const hs = dailyOn(date);
   if (!hs.length) return null;
   let s = 0;
   hs.forEach((h) => { s += scoreOf(h, date); });
   return s / hs.length;
 }
 function dayCounted(date) {
-  const hs = activeOn(date);
+  const hs = dailyOn(date);
   return hs.length > 0 && hs.every((h) => val(h.id, date) > 0);
 }
+// Ланцюжок: для щоденних — у днях, для тижневих — у тижнях, коли ціль тижня виконана
 function streakOf(h) {
+  if (!isDaily(h)) {
+    let ws = weekStart(S.today);
+    let n = weekMet(h, ws) ? 1 : 0;
+    ws = addDays(ws, -7);
+    const first = weekStart(h.start);
+    while (ws >= first && weekMet(h, ws)) { n++; ws = addDays(ws, -7); }
+    return n;
+  }
   let d = S.today;
   if (!val(h.id, d)) d = addDays(d, -1);
   let n = 0;
@@ -101,11 +136,19 @@ function streakOf(h) {
 }
 function longestOf(h) {
   let best = 0, run = 0;
+  if (!isDaily(h)) {
+    for (let ws = weekStart(h.start); ws <= S.today; ws = addDays(ws, 7)) {
+      if (weekMet(h, ws)) { run++; if (run > best) best = run; }
+      else if (ws !== weekStart(S.today)) run = 0; // поточний тиждень ще не закінчився
+    }
+    return best;
+  }
   for (let d = h.start; d <= S.today; d = addDays(d, 1)) {
     if (val(h.id, d) > 0) { run++; if (run > best) best = run; } else run = 0;
   }
   return best;
 }
+const streakLabel = (h) => (isDaily(h) ? String(streakOf(h)) : streakOf(h) + ' тиж.');
 const nextVal = (v) => (v === 0 ? 2 : v === 2 ? 1 : 0); // тап: виконано → мінімум → скинути
 
 /* ================= Запис змін (спершу на телефон) ================= */
@@ -117,7 +160,8 @@ async function setMark(hid, date, value, amount = null) {
 }
 async function saveHabit(data) {
   const now = Date.now();
-  const fields = { name: data.name, full: data.full, min: data.min, kind: data.kind === 'count' ? 'count' : 'check' };
+  const fields = { name: data.name, full: data.full, min: data.min, kind: data.kind === 'count' ? 'count' : 'check',
+    perWeek: data.perWeek >= 1 && data.perWeek <= 6 ? data.perWeek : 7 };
   if (fields.kind === 'count') {
     fields.target = data.target;
     fields.minAmount = data.minAmount;
@@ -203,7 +247,7 @@ function rerender() {
 const RING_C = 2 * Math.PI * 52;
 const TEMPLATES = [
   { name: 'Читання', kind: 'count', target: 20, minAmount: 1, unit: 'стор.' },
-  { name: 'Спорт', kind: 'count', target: 30, minAmount: 5, unit: 'хв' },
+  { name: 'Спорт', kind: 'count', target: 30, minAmount: 5, unit: 'хв', perWeek: 3 },
   { name: 'Вода', kind: 'count', target: 8, minAmount: 4, unit: 'склянок' },
   { name: 'Сон до 23:00', kind: 'check', full: 'лягти до 23:00', min: 'лягти до 00:00' },
   { name: 'Медитація', kind: 'count', target: 10, minAmount: 2, unit: 'хв' },
@@ -214,15 +258,34 @@ function syncDotClass() { return 'sync-dot ' + (S.sync.state === 'syncing' ? 'sy
 
 function todaySummary() {
   const date = S.selDate;
-  const hs = activeOn(date);
+  const hs = dailyOn(date);
+  const weekly = activeOn(date).filter((h) => !isDaily(h));
+  const ws = weekStart(date);
+  const weeklyMet = weekly.filter((h) => weekMet(h, ws)).length;
   const counted = hs.filter((h) => val(h.id, date) > 0).length;
   const full = hs.filter((h) => val(h.id, date) === 2).length;
-  const frac = dayScore(date) ?? 0;
+  let frac = dayScore(date) ?? 0;
   let head = `${counted} з ${hs.length} звичок зараховано`;
   let sub = 'Поганий день? Зроби мінімум — ланцюжок не порветься.';
   if (hs.length && full === hs.length) { head = 'Ідеальний день!'; sub = 'Усе виконано повністю. Так тримати.'; }
   else if (hs.length && counted === hs.length) { head = 'День зараховано'; sub = 'Ланцюжок цілий — навіть мінімум рахується.'; }
-  return { frac, head, sub, counted, total: hs.length };
+  if (!hs.length && weekly.length) {
+    // лише тижневі звички: кільце показує прогрес тижня
+    frac = weekly.reduce((s, h) => s + Math.min(1, weekDone(h, ws) / (weekNeed(h, ws) || 1)), 0) / weekly.length;
+    head = `Тиждень: ${weeklyMet} з ${weekly.length} цілей`;
+    sub = 'Тижневі звички роби в будь-які дні — головне встигнути до неділі.';
+  } else if (weekly.length) {
+    sub += ` Тижневі цілі: ${weeklyMet}/${weekly.length}.`;
+  }
+  return { frac, head, sub, counted, total: hs.length, any: hs.length + weekly.length };
+}
+
+// Підпис тижневої звички: «Цей тиждень: 1 / 3»
+function weekLine(h, date = S.selDate) {
+  if (isDaily(h)) return '';
+  const ws = weekStart(date);
+  const done = weekDone(h, ws), need = weekNeed(h, ws);
+  return done >= need ? `<span class="wk ok">Тиждень ✓ ${done}/${need}</span>` : `<span class="wk">Тиждень ${done}/${need}</span>`;
 }
 
 function habitSub(h, v, date = S.selDate) {
@@ -247,7 +310,8 @@ function checkInner(h, v, date = S.selDate) {
 }
 function rowClass(h, v, date = S.selDate) {
   const a = isCount(h) ? amt(h.id, date) : null;
-  return `habit glass v${v}${isCount(h) ? ' count' : ''}${v === 0 && a > 0 ? ' part' : ''}`;
+  const rest = !isDaily(h) && v === 0 && weekMet(h, weekStart(date)); // тижнева ціль уже є — сьогодні можна відпочити
+  return `habit glass v${v}${isCount(h) ? ' count' : ''}${v === 0 && a > 0 ? ' part' : ''}${rest ? ' rest' : ''}`;
 }
 function barWidth(h, date = S.selDate) {
   const a = amt(h.id, date) || 0;
@@ -277,8 +341,8 @@ function renderToday(el) {
     ? `<div class="habits stagger">${hs.map((h, i) => {
         const v = val(h.id, date);
         return `<button class="${rowClass(h, v)}" data-act="habit" data-id="${h.id}" style="--i:${i}" aria-label="${esc(h.name)}">
-          <span class="meta"><span class="name">${esc(h.name)}</span><span class="sub">${habitSub(h, v)}</span></span>
-          <span class="streak">${I.flame}<span>${streakOf(h)}</span></span>
+          <span class="meta"><span class="name">${esc(h.name)}${weekLine(h)}</span><span class="sub">${habitSub(h, v)}</span></span>
+          <span class="streak">${I.flame}<span>${streakLabel(h)}</span></span>
           <span class="check">${checkInner(h, v)}</span>
           ${isCount(h) ? `<span class="hbar"><i style="width:${barWidth(h)}%"></i></span>` : ''}</button>`;
       }).join('')}</div>
@@ -305,7 +369,7 @@ function renderToday(el) {
     <div class="progress-card glass${sum.total && sum.counted === sum.total ? ' done' : ''}" data-progress>
       <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-ring/></svg>
         <div class="val"><div><b data-pct>0%</b><small>дня</small></div></div></div>
-      <div class="txt"><b data-headline>${sum.total ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.total ? sum.sub : 'Додай першу — і відмічай щодня.'}</span></div>
+      <div class="txt"><b data-headline>${sum.any ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.any ? sum.sub : 'Додай першу — і відмічай щодня.'}</span></div>
     </div>
     ${list}`;
 
@@ -334,7 +398,9 @@ function updateTodayDynamic(row) {
     const v = val(h.id, S.selDate);
     row.className = rowClass(h, v);
     row.querySelector('.sub').innerHTML = habitSub(h, v);
-    row.querySelector('.streak span').textContent = streakOf(h);
+    row.querySelector('.streak span').textContent = streakLabel(h);
+    const nm = row.querySelector('.name');
+    nm.innerHTML = esc(h.name) + weekLine(h);
     row.querySelector('.check').innerHTML = checkInner(h, v);
     const bar = row.querySelector('.hbar i');
     if (bar) bar.style.width = barWidth(h) + '%';
@@ -469,13 +535,15 @@ function renderStats(el) {
     const what = S.period === 'week' ? 'минулого тижня' : 'минулого місяця';
     delta = d === 0 ? `як і ${what}` : `${d > 0 ? '+' : '−'}${Math.abs(d)}% до ${what}`;
   }
-  let best = { n: 0, name: '' };
-  S.habits.forEach((h) => { const n = longestOf(h); if (n > best.n) best = { n, name: h.name }; });
+  // рекорд ланцюжка: серед щоденних звичок у днях; якщо щоденних нема — серед тижневих у тижнях
+  let best = { n: 0, name: '', weeks: false };
+  const pool = S.habits.some(isDaily) ? S.habits.filter(isDaily) : S.habits;
+  pool.forEach((h) => { const n = longestOf(h); if (n > best.n) best = { n, name: h.name, weeks: !isDaily(h) }; });
   let saved = 0;
   days.forEach((d) => activeOn(d).forEach((h) => { if (val(h.id, d) === 1) saved++; }));
 
   const bars = days.map((d, i) => {
-    const hs = activeOn(d);
+    const hs = dailyOn(d);
     const f = hs.filter((h) => val(h.id, d) === 2).length;
     const m = hs.filter((h) => val(h.id, d) === 1).length;
     const n = hs.length || 1;
@@ -489,8 +557,12 @@ function renderStats(el) {
   const habits = S.habits.map((h) => {
     let any = 0, eligible = 0;
     days.forEach((d) => { if (d >= h.start) { eligible++; if (val(h.id, d) > 0) any++; } });
+    // для тижневих звичок очікується perWeek разів на кожні 7 днів
+    const expected = isDaily(h) ? eligible : Math.max(1, Math.round(perWeek(h) * eligible / 7));
+    const pct = eligible ? Math.min(100, Math.round(any / expected * 100)) : 0;
     const dots = last7.map((d) => `<i class="${d < h.start ? 'na' : 'v' + val(h.id, d)}"></i>`).join('');
-    return `<div class="hrow"><span class="n">${esc(h.name)}</span><span class="dots">${dots}</span><span class="p">${eligible ? Math.round(any / eligible * 100) : 0}%</span></div>`;
+    const tag = isDaily(h) ? '' : `<small class="fq">${perWeek(h)}×/тиж</small>`;
+    return `<div class="hrow"><span class="n">${esc(h.name)}${tag}</span><span class="dots">${dots}</span><span class="p">${pct}%</span></div>`;
   }).join('');
 
   const range = S.period === 'week'
@@ -510,7 +582,7 @@ function renderStats(el) {
       <div class="hero glass" style="--i:0">
         <div class="big"><span>Виконання за період</span><b data-total>0%</b><em>${esc(delta)}</em></div>
         <div class="side">
-          <div class="mini-card"><b>${best.n} ${plural(best.n, 'день', 'дні', 'днів')}</b><span>${best.n ? 'рекорд: ' + esc(best.name) : 'найдовший ланцюжок'}</span></div>
+          <div class="mini-card"><b>${best.n} ${best.weeks ? plural(best.n, 'тиждень', 'тижні', 'тижнів') : plural(best.n, 'день', 'дні', 'днів')}</b><span>${best.n ? 'рекорд: ' + esc(best.name) : 'найдовший ланцюжок'}</span></div>
           <div class="mini-card"><b>${saved} ${plural(saved, 'раз', 'рази', 'разів')}</b><span>врятовано мінімумом</span></div>
         </div>
       </div>
@@ -589,6 +661,12 @@ function openHabitSheet(h = null) {
       </div>
       <small data-kind-hint></small>
     </div>
+    <div class="field"><label>Як часто</label>
+      <div class="freq" role="radiogroup" aria-label="Як часто" data-freq>
+        ${[7, 1, 2, 3, 4, 5, 6].map((n) => `<button type="button" role="radio" class="glass press" data-pw="${n}">${n === 7 ? 'Щодня' : n + '×'}</button>`).join('')}
+      </div>
+      <small data-freq-hint></small>
+    </div>
     <div data-kind-count>
       <div class="field-row">
         <div class="field"><label for="f-target">Ціль</label><input id="f-target" inputmode="decimal" placeholder="20" value="${esc(v.target ?? '')}" autocomplete="off"></div>
@@ -617,12 +695,22 @@ function openHabitSheet(h = null) {
     };
     seg.addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { kind = b.dataset.kind; applyKind(); } });
     requestAnimationFrame(applyKind);
+    let pw = h ? perWeek(h) : 7;
+    const freq = sheet.querySelector('[data-freq]');
+    const applyFreq = () => {
+      freq.querySelectorAll('[data-pw]').forEach((b) => { const on = Number(b.dataset.pw) === pw; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+      sheet.querySelector('[data-freq-hint]').textContent = pw === 7
+        ? 'Щодня — рахується в щоденний відсоток і ланцюжок днів.'
+        : `${pw} ${plural(pw, 'раз', 'рази', 'разів')} на тиждень, у будь-які дні. Інші дні не рахуються пропуском, а ланцюжок рахується в тижнях.`;
+    };
+    freq.addEventListener('click', (e) => { const b = e.target.closest('[data-pw]'); if (b) { pw = Number(b.dataset.pw); applyFreq(); } });
+    applyFreq();
     if (!h) setTimeout(() => name.focus(), 350);
     const bad = (el) => { el.focus(); el.style.borderColor = '#FF8A80'; };
     sheet.querySelector('[data-save]').addEventListener('click', async () => {
       const n = name.value.trim();
       if (!n) return bad(name);
-      const data = { id: h?.id, name: n, kind };
+      const data = { id: h?.id, name: n, kind, perWeek: pw };
       if (kind === 'count') {
         const tEl = sheet.querySelector('#f-target'), mEl = sheet.querySelector('#f-minamt');
         const target = parseNum(tEl.value);
@@ -835,6 +923,17 @@ function popEl(el) {
   el.classList.add('pop');
 }
 
+// Конфеті, коли день зараховано або тижнева ціль звички щойно виконана
+function celebrate(h, date, before, row) {
+  if (!before.day && dayCounted(date)) {
+    confetti(currentView().querySelector('.ring'));
+    toast(date === S.today ? 'День зараховано — ланцюжок росте' : 'День зараховано');
+  } else if (!isDaily(h) && !before.week && weekMet(h, weekStart(date))) {
+    confetti(row?.querySelector('.check') || currentView().querySelector('.ring'));
+    toast(`Тижнева ціль: ${h.name} ✓`);
+  }
+}
+
 /* ================= Події ================= */
 let pressTimer = null, suppressClick = false, pressRow = null, pressXY = null;
 views.addEventListener('pointerdown', (e) => {
@@ -863,30 +962,24 @@ views.addEventListener('click', async (e) => {
   if (act === 'habit') {
     if (suppressClick) { suppressClick = false; return; }
     const id = t.dataset.id;
-    const before = dayCounted(S.selDate);
+    const date = S.selDate;
     const hb = habitById(id);
+    const before = { day: dayCounted(date), week: !isDaily(hb) && weekMet(hb, weekStart(date)) };
     if (isCount(hb)) {
-      const date = S.selDate;
       openAmountSheet(hb, date, () => {
         const row = currentView()?.querySelector(`.habit[data-id="${id}"]`);
         if (row) { ripple(row); popEl(row.querySelector('.check')); }
         updateTodayDynamic(row);
-        if (!before && dayCounted(date)) {
-          confetti(currentView().querySelector('.ring'));
-          toast(date === S.today ? 'День зараховано — ланцюжок росте' : 'День зараховано');
-        }
+        celebrate(hb, date, before, row);
       });
       return;
     }
-    const v = nextVal(val(id, S.selDate));
+    const v = nextVal(val(id, date));
     ripple(t, e);
     popEl(t.querySelector('.check'));
-    await setMark(id, S.selDate, v);
+    await setMark(id, date, v);
     updateTodayDynamic(t);
-    if (!before && dayCounted(S.selDate)) {
-      confetti(currentView().querySelector('.ring'));
-      toast(S.selDate === S.today ? 'День зараховано — ланцюжок росте' : 'День зараховано');
-    }
+    celebrate(hb, date, before, t);
   } else if (act === 'day') {
     S.selDate = t.dataset.date;
     rerenderAnimated();

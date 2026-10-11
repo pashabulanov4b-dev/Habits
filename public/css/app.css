@@ -379,3 +379,13 @@ svg { display: block; }
 .amount-status { text-align: center; font-size: 14px; color: var(--muted); min-height: 20px; }
 .amount-status .ok { color: var(--lime); }
 .quick { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+/* ---------- Частота: щодня / N разів на тиждень ---------- */
+.freq { display: grid; grid-template-columns: 1.9fr repeat(6, minmax(0, 1fr)); gap: 6px; }
+.freq button { min-height: 44px; border-radius: 16px; font-size: 14px; font-weight: 800; color: rgba(242,244,247,.8); transition: background .25s, color .25s, transform .35s var(--spring), box-shadow .25s; }
+.freq button.on { background: var(--lime); color: #0B0D10; border-color: var(--lime); box-shadow: 0 6px 18px rgba(212,245,122,.3); }
+.habit .name .wk { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 8px; font-size: 11px; font-weight: 800; vertical-align: 2px; background: rgba(255,255,255,.1); color: rgba(242,244,247,.85); }
+.habit .name .wk.ok { background: var(--lime-soft); color: var(--lime); }
+.habit.rest { opacity: .62; }
+.habit.rest .check { border-style: dashed; }
+.hrow .fq { display: inline; margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--muted); }
