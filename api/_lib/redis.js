@@ -6,11 +6,13 @@ const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TO
 
 export const redis = url && token ? new Redis({ url, token }) : null;
 
+// Усі ключі з префіксом habits:, щоб базу можна було ділити з іншими проєктами без конфліктів.
+const P = 'habits:';
 export const keys = {
-  habits: (uid) => `u:${uid}:h`,
-  marks: (uid) => `u:${uid}:m`,
-  push: (uid) => `u:${uid}:push`,
-  pushUsers: 'push:users'
+  habits: (uid) => `${P}u:${uid}:h`,
+  marks: (uid) => `${P}u:${uid}:m`,
+  push: (uid) => `${P}u:${uid}:push`,
+  pushUsers: `${P}push:users`
 };
 
 export function noDb(res) {
