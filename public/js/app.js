@@ -231,8 +231,11 @@ function showTab(tab, { animate = true } = {}) {
 }
 function moveIndicator() {
   const ind = document.querySelector('.tab-indicator');
-  const i = TABS.indexOf(S.tab);
-  ind.style.transform = `translateX(${i * (ind.offsetWidth + 4)}px)`;
+  const tab = document.querySelector(`.tab[data-tab="${S.tab}"]`);
+  if (!ind || !tab) return;
+  ind.style.width = tab.offsetWidth + 'px';
+  ind.style.height = tab.offsetHeight + 'px';
+  ind.style.transform = `translate(${tab.offsetLeft}px, ${tab.offsetTop}px)`;
 }
 function currentView() { return views.querySelector('.view:not(.leave)'); }
 function renderView(el = currentView()) {
@@ -375,13 +378,17 @@ function renderToday(el) {
       </div>
     </div>
     ${install}
+    <div class="cols">
+    <div class="col sticky">
     <div class="week">${week.join('')}</div>
     <div class="progress-card glass${sum.total && sum.counted === sum.total ? ' done' : ''}" data-progress>
       <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-ring/></svg>
         <div class="val"><div><b data-pct>0%</b><small>дня</small></div></div></div>
       <div class="txt"><b data-headline>${sum.any ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.any ? sum.sub : 'Додай першу — і відмічай щодня.'}</span></div>
     </div>
-    ${list}`;
+    </div>
+    <div class="col">${list}</div>
+    </div>`;
 
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const ring = el.querySelector('[data-ring]');
@@ -588,7 +595,8 @@ function renderStats(el) {
         <button role="tab" data-act="period" data-p="month" class="${S.period === 'month' ? 'on' : ''}" aria-selected="${S.period === 'month'}">Місяць</button>
       </div>
     </div>
-    <div class="stagger" style="display:flex;flex-direction:column;gap:16px">
+    <div class="cols">
+    <div class="col stagger">
       <div class="hero glass" style="--i:0">
         <div class="big"><span>Виконання за період</span><b data-total>0%</b><em>${esc(delta)}</em></div>
         <div class="side">
@@ -600,7 +608,10 @@ function renderStats(el) {
         <div class="chart-top"><b>По днях</b><div class="legend" style="padding:0;font-size:11px;gap:10px"><span><i class="l2"></i>Повністю</span><span><i class="l1"></i>Мінімум</span></div></div>
         <div class="bars">${bars}</div>
       </div>
+    </div>
+    <div class="col stagger">
       ${S.habits.length ? `<div class="hlist glass" style="--i:2"><div class="top">Звички<span>останні 7 днів</span></div>${habits}</div>` : ''}
+    </div>
     </div>`;
 
   requestAnimationFrame(() => {
@@ -1043,6 +1054,8 @@ function renderPlanDay(el) {
 
   el.innerHTML = `
     ${planHead(fmtLong.format(parseKey(date)), relDay(date))}
+    <div class="cols">
+    <div class="col">
     <div class="pstrip">${strip.join('')}<button class="pday cal" data-act="plan-mode" data-m="cal" aria-label="Відкрити календар">${ICAL}</button></div>
     ${total ? `<div class="pprog"><span>Виконано ${done} з ${total}</span><div class="pbar"><i style="width:${Math.round(done / total * 100)}%"></i></div></div>` : ''}
     <div class="stagger tlist">
@@ -1050,7 +1063,10 @@ function renderPlanDay(el) {
       ${section('За часом', timed)}
       ${section('Будь-коли', any)}
     </div>
-    ${total ? '' : `<div class="empty glass">${ISUN}<h2>${date < S.today ? 'Нічого не було' : 'Вільний день'}</h2><p>${date < S.today ? 'На цей день справ не планувалось.' : 'На цей день ще нічого не заплановано. Додай завдання знизу.'}</p></div>`}`;
+    ${total ? '' : `<div class="empty glass">${ISUN}<h2>${date < S.today ? 'Нічого не було' : 'Вільний день'}</h2><p>${date < S.today ? 'На цей день справ не планувалось.' : 'На цей день ще нічого не заплановано. Додай завдання знизу.'}</p></div>`}
+    </div>
+    <div class="col side-only sticky">${calCardHTML(date)}${legendHTML()}${nextCardHTML()}</div>
+    </div>`;
 }
 
 function renderPlanAhead(el) {
@@ -1074,7 +1090,7 @@ function renderPlanAhead(el) {
       : `<div class="empty glass">${ISUN}<h2>Наперед порожньо</h2><p>Додай завдання на будь-який день — вони з'являться тут списком по днях.</p></div>`}`;
 }
 
-function renderPlanCal(el) {
+function calCardHTML(sel = null) {
   const t0 = parseKey(S.today);
   const first = new Date(t0.getFullYear(), t0.getMonth() + S.calOffset, 1);
   const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -1087,27 +1103,39 @@ function renderPlanCal(el) {
     const st = dayState(d);
     if (st) { busy++; total += st.total; }
     const dots = st ? Array.from({ length: Math.min(3, st.total) }, () => `<i class="${st.cls}"></i>`).join('') : '';
-    cells.push(`<button class="ccell${st ? ' has' : ''}${d === S.today ? ' today' : ''}${d < S.today ? ' past' : ''}" data-act="plan-open" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ', вільно'}">
+    cells.push(`<button class="ccell${st ? ' has' : ''}${d === S.today ? ' today' : ''}${d < S.today ? ' past' : ''}${d === sel ? ' sel' : ''}" data-act="plan-open" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ', вільно'}">
       <span>${n}</span><span class="cdots">${dots}</span></button>`);
   }
-  const upcoming = S.tasks.filter((t) => !t.done && t.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTime(a, b)))[0];
-  const nextCard = upcoming ? `<button class="nextcard glass press" data-act="plan-open" data-date="${upcoming.date}">
-      <span class="nc-date"><small>${WD_SHORT[parseKey(upcoming.date).getDay()]}</small><b>${parseKey(upcoming.date).getDate()}</b></span>
-      <span class="nc-txt"><small>Найближче · ${esc(relDay(upcoming.date).toLowerCase())}</small><b>${upcoming.time ? timeRange(upcoming) + ' · ' : ''}${esc(upcoming.title)}</b></span>
-      ${I.right}</button>` : '';
-  el.innerHTML = `
-    ${planHead('Календар справ · ' + first.getFullYear(), cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
-    <div class="calcard glass">
+  const monthName = cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first));
+  return `<div class="calcard glass">
       <div class="cal-nav">
         <button class="icon-btn small press" data-act="cal-nav" data-d="-1" aria-label="Попередній місяць">${I.left}</button>
-        <span>${busy ? `${busy} ${plural(busy, 'день', 'дні', 'днів')} зі справами · ${total} ${plural(total, 'завдання', 'завдання', 'завдань')}` : 'Справ у цьому місяці немає'}</span>
+        <span>${sel ? `<b>${monthName} ${first.getFullYear()}</b><br>` : ''}${busy ? `${busy} ${plural(busy, 'день', 'дні', 'днів')} зі справами · ${total} ${plural(total, 'завдання', 'завдання', 'завдань')}` : 'Справ у цьому місяці немає'}</span>
         <button class="icon-btn small press" data-act="cal-nav" data-d="1" aria-label="Наступний місяць">${I.right}</button>
       </div>
       <div class="cgrid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span class="we">Сб</span><span class="we">Нд</span></div>
       <div class="cgrid">${cells.join('')}</div>
-    </div>
-    <div class="legend"><span><i class="l-open"></i>Заплановано</span><span><i class="l-late"></i>Не виконано</span><span><i class="l-done"></i>Усе зроблено</span></div>
-    ${nextCard}`;
+    </div>`;
+}
+const monthsFromToday = (d) => { const p = parseKey(d), n = parseKey(S.today); return (p.getFullYear() - n.getFullYear()) * 12 + p.getMonth() - n.getMonth(); };
+const legendHTML = () => '<div class="legend"><span><i class="l-open"></i>Заплановано</span><span><i class="l-late"></i>Не виконано</span><span><i class="l-done"></i>Усе зроблено</span></div>';
+function nextCardHTML() {
+  const upcoming = S.tasks.filter((t) => !t.done && t.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTime(a, b)))[0];
+  return upcoming ? `<button class="nextcard glass press" data-act="plan-open" data-date="${upcoming.date}">
+      <span class="nc-date"><small>${WD_SHORT[parseKey(upcoming.date).getDay()]}</small><b>${parseKey(upcoming.date).getDate()}</b></span>
+      <span class="nc-txt"><small>Найближче · ${esc(relDay(upcoming.date).toLowerCase())}</small><b>${upcoming.time ? timeRange(upcoming) + ' · ' : ''}${esc(upcoming.title)}</b></span>
+      ${I.right}</button>` : '';
+}
+
+function renderPlanCal(el) {
+  const t0 = parseKey(S.today);
+  const first = new Date(t0.getFullYear(), t0.getMonth() + S.calOffset, 1);
+  el.innerHTML = `
+    ${planHead('Календар справ · ' + first.getFullYear(), cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
+    <div class="cols">
+      <div class="col">${calCardHTML()}</div>
+      <div class="col sticky">${legendHTML()}${nextCardHTML()}</div>
+    </div>`;
 }
 
 // Поле «Додати…» над меню
@@ -1317,7 +1345,12 @@ views.addEventListener('pointercancel', cancelPress);
 views.addEventListener('pointermove', (e) => {
   if (pressRow && pressXY && Math.hypot(e.clientX - pressXY[0], e.clientY - pressXY[1]) > 10) cancelPress();
 });
-views.addEventListener('contextmenu', (e) => { if (e.target.closest('.habit')) e.preventDefault(); });
+views.addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('.habit');
+  if (!row) return;
+  e.preventDefault();
+  if (e.pointerType !== 'touch' && e.button === 2) openHabitSheet(S.habits.find((h) => h.id === row.dataset.id));
+});
 
 views.addEventListener('click', async (e) => {
   const t = e.target.closest('[data-act]');
@@ -1391,9 +1424,11 @@ views.addEventListener('click', async (e) => {
     rerenderAnimated();
   } else if (act === 'plan-day') {
     S.planDate = t.dataset.date;
+    S.calOffset = monthsFromToday(S.planDate);
     rerenderAnimated();
   } else if (act === 'plan-open') {
     S.planDate = t.dataset.date;
+    S.calOffset = monthsFromToday(S.planDate);
     S.planMode = 'day';
     rerenderAnimated();
   } else if (act === 'cal-nav') {
@@ -1417,7 +1452,7 @@ views.addEventListener('click', async (e) => {
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => {
   if (S.tab === b.dataset.tab) { currentView()?.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (b.dataset.tab === 'today') S.selDate = S.today;
-  if (b.dataset.tab === 'plan') { S.planDate = S.today; S.planMode = 'day'; }
+  if (b.dataset.tab === 'plan') { S.planDate = S.today; S.planMode = 'day'; S.calOffset = 0; }
   showTab(b.dataset.tab);
 }));
 window.addEventListener('resize', () => { moveIndicator(); if (S.tab === 'stats') placeKnob(currentView()); });

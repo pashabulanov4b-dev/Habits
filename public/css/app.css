@@ -274,7 +274,7 @@ svg { display: block; }
 .tab:active { transform: scale(.92); }
 .tab svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tab.on { color: var(--lime); }
-.tab-indicator { position: absolute; top: 6px; bottom: 6px; left: 6px; width: calc((100% - 24px) / 4); border-radius: 27px; background: rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.22); transition: transform .5s var(--spring); }
+.tab-indicator { position: absolute; top: 0; left: 0; width: 0; height: 0; border-radius: 27px; background: rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.22); transition: transform .5s var(--spring), width .4s var(--ease), height .4s var(--ease); pointer-events: none; }
 
 /* ---------- Нижній лист (sheet) ---------- */
 .sheet-wrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
@@ -551,3 +551,94 @@ svg { display: block; }
 .task.now { border-color: var(--lime-line); background: rgba(212,245,122,.08); }
 .task.now .tm { color: var(--lime); }
 .ttime.range { font-size: 12px; }
+
+/* =====================================================================
+   Колонки: на телефоні «прозорі» (усе йде одним стовпчиком, як і раніше),
+   на iPad і ноутбуці — дві колонки поруч
+   ===================================================================== */
+.cols, .col { display: contents; }
+.col.side-only { display: none; }
+.tabbar .brand { display: none; }
+
+/* ===== iPad і ноутбук: однаковий вигляд — бокове меню + широкий контент ===== */
+@media (min-width: 768px) {
+  :root {
+    --nav-w: 232px;
+    --gx: clamp(20px, 2.6vw, 36px);
+    --content-max: 1100px;
+  }
+  .view {
+    padding: calc(var(--safe-top) + var(--gx) + 6px) var(--gx) 56px calc(var(--nav-w) + var(--gx) * 2);
+    gap: 18px; align-items: center;
+  }
+  .view > * { width: 100%; max-width: var(--content-max); }
+  .view[data-view="plan"] { padding-bottom: 120px; }
+  .head h1 { font-size: 38px; }
+
+  /* бокове скляне меню */
+  .tabbar {
+    top: calc(var(--safe-top) + var(--gx)); bottom: var(--gx); left: var(--gx); right: auto;
+    width: var(--nav-w); height: auto; border-radius: 30px; padding: 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .tabbar .brand { display: flex; align-items: center; gap: 12px; padding: 6px 8px 18px; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .tabbar .brand img { width: 40px; height: 40px; border-radius: 12px; }
+  .tabbar .brand span { display: flex; flex-direction: column; }
+  .tabbar .brand b { font-family: var(--round); font-size: 18px; font-weight: 800; }
+  .tabbar .brand small { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .tab { flex: 0 0 auto; height: 52px; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 16px; border-radius: 18px; font-size: 15px; }
+  .tab:active { transform: scale(.97); }
+  .tab-indicator { border-radius: 18px; }
+
+  /* дві колонки, коли місця достатньо */
+  .cols { display: block; }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .col.side-only { display: none; }
+
+  /* нижні листи → вікна по центру */
+  .sheet-wrap { align-items: center; padding: var(--gx); }
+  .sheet { max-width: 540px; max-height: min(88vh, 860px); border-radius: 32px; border-bottom: 1px solid rgba(255,255,255,.14);
+    padding: 22px 24px 24px; animation: dialogIn .45s var(--spring) both; }
+  .sheet-wrap.closing .sheet { animation: dialogOut .22s ease-in both; }
+  .sheet .grabber { display: none; }
+  @keyframes dialogIn { from { opacity: 0; transform: translateY(16px) scale(.96); } }
+  @keyframes dialogOut { to { opacity: 0; transform: translateY(10px) scale(.97); } }
+
+  /* поле «Додати завдання» — плаваюча кнопка-рядок справа внизу */
+  .planbar { left: auto; right: var(--gx); bottom: var(--gx); width: min(420px, calc(100vw - var(--nav-w) - var(--gx) * 3)); }
+
+  #toast { left: calc(50% + (var(--nav-w) + var(--gx)) / 2); }
+  .tgroups { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+}
+
+/* вужчі широкі екрани (iPad вертикально): компактне меню з іконками, решта — так само */
+@media (min-width: 768px) and (max-width: 1099px) {
+  :root { --nav-w: 76px; }
+  .tabbar { padding: 12px 10px; align-items: stretch; }
+  .tabbar .brand { justify-content: center; padding: 4px 0 14px; }
+  .tabbar .brand span { display: none; }
+  .tab { justify-content: center; padding: 0; height: 56px; font-size: 0; gap: 0; }
+  .tab svg { width: 24px; height: 24px; }
+}
+
+@media (min-width: 768px) {
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 24px; align-items: start; }
+  .view[data-view="plan"] .cols { grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr); }
+  .col.side-only { display: flex; }
+  .col.sticky { position: sticky; top: 0; }
+  .view[data-view="plan"] .pday.cal { display: none; }
+  .view[data-view="plan"] .pstrip { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .ccell.sel { outline: 2px solid var(--text); outline-offset: -2px; }
+  .cal-nav span b { color: var(--text); font-size: 15px; }
+}
+
+/* миша і трекпад: підсвітка при наведенні */
+@media (hover: hover) and (pointer: fine) {
+  .tab:not(.on):hover { color: var(--text); background: rgba(255,255,255,.06); }
+  .habit.v0:hover, .task.glass:not(.done):hover { border-color: rgba(255,255,255,.3); }
+  .icon-btn:hover, .chip:hover, .pday:not(.sel):hover, .day:not(.sel):hover, .ccell:not(.today):hover, .mc:not(.on):not([disabled]):hover,
+  .tpill:not(.on):hover, .small-btn:hover, .round-btn:hover { background-color: rgba(255,255,255,.12); }
+  .tcheck:hover::before { border-color: var(--lime); }
+  .nextcard:hover, .planbar:hover { border-color: rgba(255,255,255,.28); }
+  .cell:not(.future):not(.na):hover { transform: scale(1.12); }
+}
