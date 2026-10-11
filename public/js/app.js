@@ -423,7 +423,7 @@ function renderStats(el) {
     : cap(fmtMonth.format(parseKey(S.today)).replace(' р.', ''));
 
   el.innerHTML = `
-    <div class="head">
+    <div class="head stack">
       <div><div class="eyebrow">${esc(range)}</div><h1>Статистика</h1></div>
       <div class="seg glass" role="tablist" aria-label="Період">
         <div class="knob"></div>
