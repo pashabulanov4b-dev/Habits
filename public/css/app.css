@@ -26,13 +26,15 @@ html, body {
   font-family: var(--sans); overflow: hidden; overscroll-behavior: none;
   -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
 }
-body { position: fixed; inset: 0; touch-action: manipulation; }
+/* iOS у повноекранному режимі: висота на весь екран, включно зі смужкою «додому» внизу */
+html, body { height: 100vh; height: 100lvh; }
+body { position: fixed; top: 0; left: 0; right: 0; touch-action: manipulation; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 input { font: inherit; color: inherit; }
 button, .tab, .habit, .cell { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 svg { display: block; }
 
-#app { position: fixed; inset: 0; overflow: hidden; }
+#app { position: fixed; top: 0; left: 0; right: 0; height: 100vh; height: 100lvh; overflow: hidden; }
 
 /* ---------- Живий фон під склом ---------- */
 .bg { position: absolute; inset: -20%; pointer-events: none; }
@@ -318,13 +320,15 @@ svg { display: block; }
 .install button svg { width: 16px; height: 16px; stroke: var(--muted); }
 
 #toast {
-  position: fixed; left: 50%; top: calc(var(--safe-top) + 10px); z-index: 80; transform: translate(-50%, -140%);
+  position: fixed; left: 50%; top: calc(var(--safe-top) + 10px); z-index: 80;
+  /* повністю схований, поки нема повідомлення (раніше краєчок визирав біля Dynamic Island) */
+  transform: translate(-50%, -16px) scale(.94); opacity: 0; visibility: hidden;
   padding: 12px 18px; border-radius: 22px; font-size: 14px; font-weight: 700; max-width: calc(100% - 36px); text-align: center;
   background: rgba(30, 33, 40, .8); border: 1px solid rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 12px 30px rgba(0,0,0,.4);
   -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%);
-  transition: transform .5s var(--spring); pointer-events: none;
+  transition: transform .45s var(--spring), opacity .25s ease, visibility 0s linear .45s; pointer-events: none;
 }
-#toast.show { transform: translate(-50%, 0); }
+#toast.show { transform: translate(-50%, 0) scale(1); opacity: 1; visibility: visible; transition: transform .5s var(--spring), opacity .2s ease, visibility 0s; }
 
 #fx { position: fixed; inset: 0; pointer-events: none; z-index: 90; overflow: hidden; }
 .spark { position: absolute; width: 8px; height: 8px; border-radius: 2px; will-change: transform, opacity; }
