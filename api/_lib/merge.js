@@ -7,6 +7,8 @@ const ID_RE = /^h-[a-z0-9]{4,40}$/;
 
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
 const num = (v) => (Number.isFinite(v) ? v : 0);
+// кількість (сторінок, хвилин…): невід'ємне число з одним знаком після коми, або null
+const amount = (v) => (Number.isFinite(v) && v >= 0 && v < 1e6 ? Math.round(v * 10) / 10 : null);
 
 export function cleanHabit(h) {
   if (!h || !ID_RE.test(h.id)) return null;
@@ -15,6 +17,10 @@ export function cleanHabit(h) {
     name: str(h.name, 60),
     full: str(h.full, 60),
     min: str(h.min, 60),
+    kind: h.kind === 'count' ? 'count' : 'check',
+    target: amount(h.target),
+    minAmount: amount(h.minAmount),
+    unit: str(h.unit, 20),
     order: num(h.order),
     start: DATE_RE.test(h.start) ? h.start : '1970-01-01',
     createdAt: num(h.createdAt),
@@ -26,7 +32,7 @@ export function cleanHabit(h) {
 export function cleanMark(m) {
   if (!m || !ID_RE.test(m.habitId) || !DATE_RE.test(m.date)) return null;
   const value = [0, 1, 2].includes(m.value) ? m.value : 0;
-  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, updatedAt: num(m.updatedAt) };
+  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), updatedAt: num(m.updatedAt) };
 }
 
 export const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);

@@ -30,6 +30,15 @@ test('очищення відкидає сміття', () => {
   assert.equal(cleanHabit({ id: 'h-abcd', name: 'x'.repeat(200) }).name.length, 60);
 });
 
+test('кількість зберігається при синхронізації', () => {
+  assert.equal(cleanMark({ habitId: 'h-abcd', date: '2026-10-11', value: 1, amount: 19 }).amount, 19);
+  assert.equal(cleanMark({ habitId: 'h-abcd', date: '2026-10-11', value: 1, amount: -3 }).amount, null);
+  assert.equal(cleanMark({ habitId: 'h-abcd', date: '2026-10-11', value: 2 }).amount, null);
+  const h = cleanHabit({ id: 'h-abcd', name: 'Читання', kind: 'count', target: 20, minAmount: 1, unit: 'стор.' });
+  assert.deepEqual([h.kind, h.target, h.minAmount, h.unit], ['count', 20, 1, 'стор.']);
+  assert.equal(cleanHabit({ id: 'h-abcd', name: 'x', kind: 'evil' }).kind, 'check');
+});
+
 test('часовий пояс рахується правильно', () => {
   const t = Date.UTC(2026, 9, 11, 18, 5); // 18:05 UTC = 20:05 у Берліні (літній час)
   assert.deepEqual(localParts(t, 'Europe/Berlin'), { date: '2026-10-11', minutes: 20 * 60 + 5 });

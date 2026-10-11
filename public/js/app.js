@@ -36,17 +36,56 @@ const S = {
 async function loadState() {
   const [habits, marks] = await Promise.all([db.getAll('habits'), db.getAll('marks')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
-  S.marks = new Map(marks.map((m) => [m.k, m.value]));
+  S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null }]));
 }
 
-const val = (hid, date) => S.marks.get(hid + '|' + date) || 0;
+const markOf = (hid, date) => S.marks.get(hid + '|' + date);
+const habitById = (id) => S.habits.find((h) => h.id === id);
+// Стан відмітки 0/1/2. Для звичок з кількістю рахується з числа — тож якщо змінити ціль, старі дні перерахуються.
+const val = (hid, date) => {
+  const m = markOf(hid, date);
+  if (!m) return 0;
+  const h = habitById(hid);
+  if (isCount(h) && m.amount != null) return valueForAmount(h, m.amount);
+  return m.value || 0;
+};
+const amt = (hid, date) => { const m = markOf(hid, date); return m && m.amount != null ? m.amount : null; };
 const activeOn = (date) => S.habits.filter((h) => h.start <= date);
+
+/* ===== Звички з кількістю (напр. 19 з 20 сторінок) ===== */
+const isCount = (h) => h && h.kind === 'count' && h.target > 0;
+const minOf = (h) => Math.min(h.minAmount > 0 ? h.minAmount : h.target, h.target);
+const fmtNum = (n) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10).replace('.', ','));
+const parseNum = (s) => { const n = parseFloat(String(s).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : null; };
+// Скільки зроблено → стан відмітки: ціль = повністю, від мінімуму = мінімум, менше — не зараховано
+function valueForAmount(h, a) {
+  if (a == null || a <= 0) return 0;
+  if (a >= h.target) return 2;
+  if (a >= minOf(h)) return 1;
+  return 0;
+}
+/**
+ * Внесок звички в день (0…1):
+ * повністю = 100%, мінімум = 50%, а між мінімумом і ціллю — пропорційно.
+ * 20 сторінок, мінімум 1: 1 стор. = 50%, 10 стор. ≈ 74%, 19 стор. ≈ 97%, 20 = 100%.
+ */
+function scoreOf(h, date) {
+  const m = markOf(h.id, date);
+  if (!m) return 0;
+  if (isCount(h) && m.amount != null) {
+    const a = m.amount, t = h.target, mn = minOf(h);
+    if (a >= t) return 1;
+    if (a < mn) return 0;
+    return t === mn ? 1 : 0.5 + 0.5 * (a - mn) / (t - mn);
+  }
+  return m.value === 2 ? 1 : m.value === 1 ? 0.5 : 0;
+}
 
 function dayScore(date) {
   const hs = activeOn(date);
   if (!hs.length) return null;
   let s = 0;
-  hs.forEach((h) => { const v = val(h.id, date); s += v === 2 ? 1 : v === 1 ? 0.5 : 0; });
+  hs.forEach((h) => { s += scoreOf(h, date); });
   return s / hs.length;
 }
 function dayCounted(date) {
@@ -70,20 +109,29 @@ function longestOf(h) {
 const nextVal = (v) => (v === 0 ? 2 : v === 2 ? 1 : 0); // тап: виконано → мінімум → скинути
 
 /* ================= Запис змін (спершу на телефон) ================= */
-async function setMark(hid, date, value) {
-  const rec = { k: hid + '|' + date, habitId: hid, date, value, updatedAt: Date.now(), dirty: true };
-  S.marks.set(rec.k, value);
+async function setMark(hid, date, value, amount = null) {
+  const rec = { k: hid + '|' + date, habitId: hid, date, value, amount, updatedAt: Date.now(), dirty: true };
+  S.marks.set(rec.k, { value, amount });
   await db.put('marks', rec);
   scheduleSync();
 }
 async function saveHabit(data) {
   const now = Date.now();
+  const fields = { name: data.name, full: data.full, min: data.min, kind: data.kind === 'count' ? 'count' : 'check' };
+  if (fields.kind === 'count') {
+    fields.target = data.target;
+    fields.minAmount = data.minAmount;
+    fields.unit = data.unit || '';
+    // текстові описи теж заповнюємо — їх бачать нагадування та старі версії
+    fields.full = `${fmtNum(data.target)} ${fields.unit}`.trim();
+    fields.min = `${fmtNum(data.minAmount)} ${fields.unit}`.trim();
+  }
   let h = data.id ? S.habits.find((x) => x.id === data.id) : null;
   if (h) {
-    Object.assign(h, { name: data.name, full: data.full, min: data.min, updatedAt: now, dirty: true });
+    Object.assign(h, fields, { updatedAt: now, dirty: true });
   } else {
     const maxOrder = S.habits.reduce((m, x) => Math.max(m, x.order), 0);
-    h = { id: 'h-' + now.toString(36) + Math.random().toString(36).slice(2, 7), name: data.name, full: data.full, min: data.min,
+    h = { id: 'h-' + now.toString(36) + Math.random().toString(36).slice(2, 7), ...fields,
       order: maxOrder + 1, start: S.today, createdAt: now, updatedAt: now, deleted: false, dirty: true };
     S.habits.push(h);
   }
@@ -154,12 +202,12 @@ function rerender() {
 /* ================= Екран «Сьогодні» ================= */
 const RING_C = 2 * Math.PI * 52;
 const TEMPLATES = [
-  ['Читання', '20 сторінок', '1 сторінка'],
-  ['Спорт', '30 хв тренування', '10 віджимань'],
-  ['Вода', '8 склянок', '4 склянки'],
-  ['Сон до 23:00', 'лягти до 23:00', 'лягти до 00:00'],
-  ['Медитація', '10 хвилин', '3 глибокі вдихи'],
-  ['Іноземна мова', '30 хв уроку', '10 нових слів']
+  { name: 'Читання', kind: 'count', target: 20, minAmount: 1, unit: 'стор.' },
+  { name: 'Спорт', kind: 'count', target: 30, minAmount: 5, unit: 'хв' },
+  { name: 'Вода', kind: 'count', target: 8, minAmount: 4, unit: 'склянок' },
+  { name: 'Сон до 23:00', kind: 'check', full: 'лягти до 23:00', min: 'лягти до 00:00' },
+  { name: 'Медитація', kind: 'count', target: 10, minAmount: 2, unit: 'хв' },
+  { name: 'Іноземна мова', kind: 'count', target: 30, minAmount: 5, unit: 'хв' }
 ];
 
 function syncDotClass() { return 'sync-dot ' + (S.sync.state === 'syncing' ? 'syncing' : S.sync.state === 'offline' ? 'offline' : S.sync.state === 'error' ? 'error' : ''); }
@@ -177,9 +225,33 @@ function todaySummary() {
   return { frac, head, sub, counted, total: hs.length };
 }
 
-function habitSub(h, v) {
+function habitSub(h, v, date = S.selDate) {
+  if (isCount(h)) {
+    const a = amt(h.id, date);
+    const u = h.unit ? ' ' + esc(h.unit) : '';
+    if (a != null && a > 0) {
+      const left = h.target - a;
+      return `<b class="amt">${fmtNum(a)}</b> / ${fmtNum(h.target)}${u}` + (left > 0 ? ` · ще ${fmtNum(left)}` : ' · ціль ✓');
+    }
+    return `Ціль: ${fmtNum(h.target)}${u} · мін. ${fmtNum(minOf(h))}`;
+  }
   if (v === 1) return 'Мінімум: ' + esc(h.min || '—');
   return 'Мета: ' + esc(h.full || '—') + (h.min ? ' · мін. ' + esc(h.min) : '');
+}
+
+// Кружок справа: галочка / МІН / число (19) для часткового виконання
+function checkInner(h, v, date = S.selDate) {
+  const a = isCount(h) ? amt(h.id, date) : null;
+  const label = a != null && a > 0 && v !== 2 ? fmtNum(a) : 'МІН';
+  return `${I.check}<span class="min">${label}</span>`;
+}
+function rowClass(h, v, date = S.selDate) {
+  const a = isCount(h) ? amt(h.id, date) : null;
+  return `habit glass v${v}${isCount(h) ? ' count' : ''}${v === 0 && a > 0 ? ' part' : ''}`;
+}
+function barWidth(h, date = S.selDate) {
+  const a = amt(h.id, date) || 0;
+  return Math.min(100, Math.round(a / h.target * 100));
 }
 
 function renderToday(el) {
@@ -204,18 +276,19 @@ function renderToday(el) {
   const list = hs.length
     ? `<div class="habits stagger">${hs.map((h, i) => {
         const v = val(h.id, date);
-        return `<button class="habit glass v${v}" data-act="habit" data-id="${h.id}" style="--i:${i}" aria-label="${esc(h.name)}">
+        return `<button class="${rowClass(h, v)}" data-act="habit" data-id="${h.id}" style="--i:${i}" aria-label="${esc(h.name)}">
           <span class="meta"><span class="name">${esc(h.name)}</span><span class="sub">${habitSub(h, v)}</span></span>
           <span class="streak">${I.flame}<span>${streakOf(h)}</span></span>
-          <span class="check">${I.check}<span class="min">МІН</span></span></button>`;
+          <span class="check">${checkInner(h, v)}</span>
+          ${isCount(h) ? `<span class="hbar"><i style="width:${barWidth(h)}%"></i></span>` : ''}</button>`;
       }).join('')}</div>
-      <div class="hint">Тап — виконано, ще тап — мінімум, ще — скинути.<br>Утримуй звичку, щоб змінити або видалити.</div>`
+      <div class="hint">Тап — відмітити (у звичках з кількістю — ввести, скільки зроблено).<br>Утримуй звичку, щоб змінити або видалити.</div>`
     : S.habits.length
       ? `<div class="empty glass"><p>Цього дня звичок ще не було.</p></div>`
       : `<div class="empty glass">
           <h2>Почнімо з однієї звички</h2>
           <p>Для кожної задай повну мету і мінімум — на дні, коли зовсім немає сил.</p>
-          <div class="chips">${TEMPLATES.map((tp, i) => `<button class="chip glass press" data-act="template" data-i="${i}">${esc(tp[0])}</button>`).join('')}</div>
+          <div class="chips">${TEMPLATES.map((tp, i) => `<button class="chip glass press" data-act="template" data-i="${i}">${esc(tp.name)}</button>`).join('')}</div>
           <button class="btn primary press" data-act="add">${I.plus.replace('<svg', '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"')}Своя звичка</button>
         </div>`;
 
@@ -259,10 +332,12 @@ function updateTodayDynamic(row) {
   if (row) {
     const h = S.habits.find((x) => x.id === row.dataset.id);
     const v = val(h.id, S.selDate);
-    row.classList.remove('v0', 'v1', 'v2');
-    row.classList.add('v' + v);
+    row.className = rowClass(h, v);
     row.querySelector('.sub').innerHTML = habitSub(h, v);
     row.querySelector('.streak span').textContent = streakOf(h);
+    row.querySelector('.check').innerHTML = checkInner(h, v);
+    const bar = row.querySelector('.hbar i');
+    if (bar) bar.style.width = barWidth(h) + '%';
   }
   return sum;
 }
@@ -500,22 +575,66 @@ function closeSheet(instant = false) {
   setTimeout(() => w.remove(), 280);
 }
 
-function openHabitSheet(h = null, preset = null) {
-  const v = h || { name: preset?.[0] || '', full: preset?.[1] || '', min: preset?.[2] || '' };
+function openHabitSheet(h = null) {
+  const v = h || { name: '', full: '', min: '', kind: 'count', target: '', minAmount: '', unit: '' };
+  let kind = isCount(v) || (!h && v.kind === 'count') ? 'count' : 'check';
   openSheet(`
     <h2>${h ? 'Редагувати звичку' : 'Нова звичка'}</h2>
     <div class="field"><label for="f-name">Назва</label><input id="f-name" maxlength="40" placeholder="Напр. Читання" value="${esc(v.name)}" autocomplete="off"></div>
-    <div class="field"><label for="f-full">Повна мета</label><input id="f-full" maxlength="40" placeholder="Напр. 20 сторінок" value="${esc(v.full)}" autocomplete="off"></div>
-    <div class="field"><label for="f-min">Мінімум на поганий день</label><input id="f-min" maxlength="40" placeholder="Напр. 1 сторінка" value="${esc(v.min)}" autocomplete="off"><small>Настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
+    <div class="field"><label>Як відмічати</label>
+      <div class="seg glass" role="tablist" data-kind-seg>
+        <div class="knob"></div>
+        <button type="button" role="tab" data-kind="count">Кількість</button>
+        <button type="button" role="tab" data-kind="check">Так / ні</button>
+      </div>
+      <small data-kind-hint></small>
+    </div>
+    <div data-kind-count>
+      <div class="field-row">
+        <div class="field"><label for="f-target">Ціль</label><input id="f-target" inputmode="decimal" placeholder="20" value="${esc(v.target ?? '')}" autocomplete="off"></div>
+        <div class="field"><label for="f-minamt">Мінімум</label><input id="f-minamt" inputmode="decimal" placeholder="1" value="${esc(v.minAmount ?? '')}" autocomplete="off"></div>
+      </div>
+      <div class="field"><label for="f-unit">Одиниця</label><input id="f-unit" maxlength="16" placeholder="стор., хв, склянок, км…" value="${esc(v.unit || '')}" autocomplete="off">
+        <small>Мінімум — настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
+    </div>
+    <div data-kind-check>
+      <div class="field"><label for="f-full">Повна мета</label><input id="f-full" maxlength="40" placeholder="Напр. лягти до 23:00" value="${esc(isCount(v) ? '' : v.full)}" autocomplete="off"></div>
+      <div class="field"><label for="f-min">Мінімум на поганий день</label><input id="f-min" maxlength="40" placeholder="Напр. лягти до 00:00" value="${esc(isCount(v) ? '' : v.min)}" autocomplete="off"><small>Настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
+    </div>
     <button class="btn primary block press" data-save>${h ? 'Зберегти' : 'Додати'}</button>
     ${h ? '<button class="btn danger block press" data-del>Видалити звичку</button>' : ''}
   `, (sheet) => {
     const name = sheet.querySelector('#f-name');
+    const seg = sheet.querySelector('[data-kind-seg]');
+    const applyKind = () => {
+      seg.querySelectorAll('button').forEach((b) => { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
+      sheet.querySelector('[data-kind-count]').hidden = kind !== 'count';
+      sheet.querySelector('[data-kind-check]').hidden = kind !== 'check';
+      sheet.querySelector('[data-kind-hint]').textContent = kind === 'count'
+        ? 'Вводиш, скільки зробив: 19 з 20 сторінок зарахується майже як повний день.'
+        : 'Просто відмічаєш: виконано, мінімум або ні.';
+      placeKnob(sheet);
+    };
+    seg.addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { kind = b.dataset.kind; applyKind(); } });
+    requestAnimationFrame(applyKind);
     if (!h) setTimeout(() => name.focus(), 350);
+    const bad = (el) => { el.focus(); el.style.borderColor = '#FF8A80'; };
     sheet.querySelector('[data-save]').addEventListener('click', async () => {
       const n = name.value.trim();
-      if (!n) { name.focus(); name.style.borderColor = '#FF8A80'; return; }
-      await saveHabit({ id: h?.id, name: n, full: sheet.querySelector('#f-full').value.trim(), min: sheet.querySelector('#f-min').value.trim() });
+      if (!n) return bad(name);
+      const data = { id: h?.id, name: n, kind };
+      if (kind === 'count') {
+        const tEl = sheet.querySelector('#f-target'), mEl = sheet.querySelector('#f-minamt');
+        const target = parseNum(tEl.value);
+        if (!target) return bad(tEl);
+        let minAmount = parseNum(mEl.value);
+        if (minAmount == null || minAmount <= 0) minAmount = Math.max(1, Math.round(target * 0.1));
+        if (minAmount > target) return bad(mEl);
+        Object.assign(data, { target, minAmount, unit: sheet.querySelector('#f-unit').value.trim() });
+      } else {
+        Object.assign(data, { full: sheet.querySelector('#f-full').value.trim(), min: sheet.querySelector('#f-min').value.trim() });
+      }
+      await saveHabit(data);
       closeSheet();
       toast(h ? 'Збережено' : 'Звичку додано');
       rerenderAnimated();
@@ -533,6 +652,72 @@ function openHabitSheet(h = null, preset = null) {
     }
   });
 }
+/* ===== Вікно «Скільки зроблено?» ===== */
+function openAmountSheet(h, date, onDone) {
+  const start = amt(h.id, date) ?? (val(h.id, date) === 2 ? h.target : val(h.id, date) === 1 ? minOf(h) : 0);
+  let a = start;
+  const u = h.unit ? ' ' + esc(h.unit) : '';
+  const isToday = date === S.today;
+  const dayLabel = isToday ? 'сьогодні' : fmtLong.format(parseKey(date));
+  const step = h.target <= 10 ? 1 : h.target <= 60 ? 1 : 5;
+  const minPos = Math.round(minOf(h) / h.target * 100);
+  openSheet(`
+    <h2>${esc(h.name)}</h2>
+    <div class="amount-sub">Скільки зроблено ${esc(dayLabel)}?</div>
+    <div class="amount-box">
+      <button type="button" class="round-btn glass press" data-dec aria-label="Менше">−</button>
+      <div class="amount-mid">
+        <input class="amount-input" data-amount inputmode="decimal" value="${fmtNum(a)}" aria-label="Кількість" autocomplete="off">
+        <div class="amount-of">з ${fmtNum(h.target)}${u}</div>
+      </div>
+      <button type="button" class="round-btn glass press" data-inc aria-label="Більше">+</button>
+    </div>
+    <div class="amount-track"><i data-fill></i><span class="min-mark" style="left:${minPos}%"></span></div>
+    <div class="amount-status" data-status></div>
+    <div class="quick">
+      <button type="button" class="chip glass press" data-set="${minOf(h)}">Мінімум · ${fmtNum(minOf(h))}</button>
+      <button type="button" class="chip glass press" data-set="${h.target}">Ціль · ${fmtNum(h.target)}</button>
+      <button type="button" class="chip glass press" data-add="${step * 5}">+${step * 5}</button>
+    </div>
+    <button class="btn primary block press" data-ok>Зберегти</button>
+    <button class="btn block press" data-clear style="color:var(--muted)">Скинути</button>
+  `, (sheet) => {
+    const input = sheet.querySelector('[data-amount]');
+    const paint = (fromInput = false) => {
+      if (!fromInput) input.value = fmtNum(a);
+      const v = valueForAmount(h, a);
+      sheet.querySelector('[data-fill]').style.width = Math.min(100, a / h.target * 100) + '%';
+      sheet.querySelector('[data-fill]').className = 'v' + v;
+      const pct = Math.round(scoreOfAmount(h, a) * 100);
+      sheet.querySelector('[data-status]').innerHTML = v === 2 ? `<b class="ok">Ціль виконано</b> · 100% дня для звички`
+        : v === 1 ? `<b class="ok">${a > minOf(h) ? 'Зараховано' : 'Мінімум зараховано'}</b> · ${pct}% · до цілі ще ${fmtNum(h.target - a)}`
+        : a > 0 ? `Ще ${fmtNum(minOf(h) - a)} до мінімуму` : 'Ще не відмічено';
+    };
+    const set = (n) => { a = Math.max(0, Math.round(n * 10) / 10); paint(); };
+    sheet.querySelector('[data-dec]').addEventListener('click', () => set(a - step));
+    sheet.querySelector('[data-inc]').addEventListener('click', () => set(a + step));
+    sheet.querySelectorAll('[data-set]').forEach((b) => b.addEventListener('click', () => set(Number(b.dataset.set))));
+    sheet.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => set(a + Number(b.dataset.add))));
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('input', () => { const n = parseNum(input.value); a = n ?? 0; paint(true); });
+    const save = async (value) => {
+      await setMark(h.id, date, valueForAmount(h, value), value > 0 ? value : null);
+      closeSheet();
+      if (onDone) onDone();
+    };
+    sheet.querySelector('[data-ok]').addEventListener('click', () => save(a));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(a); });
+    sheet.querySelector('[data-clear]').addEventListener('click', () => save(0));
+    paint();
+  });
+}
+function scoreOfAmount(h, a) {
+  const t = h.target, mn = minOf(h);
+  if (a >= t) return 1;
+  if (a < mn || a <= 0) return 0;
+  return t === mn ? 1 : 0.5 + 0.5 * (a - mn) / (t - mn);
+}
+
 function rerenderAnimated() {
   const el = currentView();
   if (!el) return;
@@ -679,6 +864,20 @@ views.addEventListener('click', async (e) => {
     if (suppressClick) { suppressClick = false; return; }
     const id = t.dataset.id;
     const before = dayCounted(S.selDate);
+    const hb = habitById(id);
+    if (isCount(hb)) {
+      const date = S.selDate;
+      openAmountSheet(hb, date, () => {
+        const row = currentView()?.querySelector(`.habit[data-id="${id}"]`);
+        if (row) { ripple(row); popEl(row.querySelector('.check')); }
+        updateTodayDynamic(row);
+        if (!before && dayCounted(date)) {
+          confetti(currentView().querySelector('.ring'));
+          toast(date === S.today ? 'День зараховано — ланцюжок росте' : 'День зараховано');
+        }
+      });
+      return;
+    }
     const v = nextVal(val(id, S.selDate));
     ripple(t, e);
     popEl(t.querySelector('.check'));
@@ -695,13 +894,18 @@ views.addEventListener('click', async (e) => {
     openHabitSheet();
   } else if (act === 'template') {
     const tp = TEMPLATES[+t.dataset.i];
-    await saveHabit({ name: tp[0], full: tp[1], min: tp[2] });
-    toast('Додано: ' + tp[0]);
+    await saveHabit({ ...tp });
+    toast('Додано: ' + tp.name);
     rerenderAnimated();
   } else if (act === 'settings') {
     openSettings();
   } else if (act === 'cell') {
     const { id, date } = t.dataset;
+    const hc = habitById(id);
+    if (isCount(hc)) {
+      openAmountSheet(hc, date, () => rerender());
+      return;
+    }
     await setMark(id, date, nextVal(val(id, date)));
     t.classList.remove('v0', 'v1', 'v2');
     t.classList.add('v' + val(id, date));
