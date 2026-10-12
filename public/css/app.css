@@ -702,3 +702,19 @@ small.warn:empty { display: none; }
 .tnote.has { color: var(--lime); border-color: var(--lime-line); background: var(--lime-soft); }
 .task.compact .tnote { width: 30px; height: 30px; }
 @media (hover: hover) and (pointer: fine) { .tnote:hover { color: var(--text); border-color: rgba(255,255,255,.3); } }
+
+/* ---------- Повний текст без «…»: назви й нотатки переносяться на нові рядки ---------- */
+.tt, .tm, .tn, .tn.compact,
+.habit .name, .habit .sub, .habit .sub .hn,
+.nc-txt b, .hrow .n {
+  white-space: normal; overflow: visible; text-overflow: clip;
+  overflow-wrap: anywhere; word-break: break-word;
+  -webkit-line-clamp: unset; line-clamp: none; display: block;
+}
+.tt { line-height: 1.25; }
+.tn { line-height: 1.35; }
+.tbody { padding: 4px 0; }
+.habit { align-items: center; }
+.habit .meta { padding: 4px 0; }
+.habit .name { line-height: 1.25; }
+.habit .sub { line-height: 1.35; }
