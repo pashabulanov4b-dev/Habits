@@ -1,6 +1,6 @@
 // Service worker: застосунок відкривається без інтернету + приймає push-сповіщення.
 // Після зміни списку файлів збільш VERSION.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = 'habits-' + VERSION;
 const SHELL = [
   '/',

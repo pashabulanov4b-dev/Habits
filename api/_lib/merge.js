@@ -21,6 +21,8 @@ export function cleanHabit(h) {
     target: amount(h.target),
     minAmount: amount(h.minAmount),
     unit: str(h.unit, 20),
+    note: str(h.note, 300),
+    askNote: !!h.askNote,
     perWeek: Number.isInteger(h.perWeek) && h.perWeek >= 1 && h.perWeek <= 7 ? h.perWeek : 7,
     order: num(h.order),
     start: DATE_RE.test(h.start) ? h.start : '1970-01-01',
@@ -33,7 +35,7 @@ export function cleanHabit(h) {
 export function cleanMark(m) {
   if (!m || !ID_RE.test(m.habitId) || !DATE_RE.test(m.date)) return null;
   const value = [0, 1, 2].includes(m.value) ? m.value : 0;
-  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), updatedAt: num(m.updatedAt) };
+  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), note: str(m.note, 500), updatedAt: num(m.updatedAt) };
 }
 
 const TASK_RE = /^t-[a-z0-9]{4,40}$/;

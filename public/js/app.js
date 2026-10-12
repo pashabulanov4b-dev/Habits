@@ -41,7 +41,7 @@ const S = {
 async function loadState() {
   const [habits, marks, tasks] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
-  S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null }]));
+  S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null, note: m.note || '' }]));
   S.tasks = tasks.filter((t) => !t.deleted);
 }
 
@@ -158,16 +158,21 @@ const streakLabel = (h) => (isDaily(h) ? String(streakOf(h)) : streakOf(h) + ' �
 const nextVal = (v) => (v === 0 ? 2 : v === 2 ? 1 : 0); // тап: виконано → мінімум → скинути
 
 /* ================= Запис змін (спершу на телефон) ================= */
-async function setMark(hid, date, value, amount = null) {
-  const rec = { k: hid + '|' + date, habitId: hid, date, value, amount, updatedAt: Date.now(), dirty: true };
-  S.marks.set(rec.k, { value, amount });
+// amount / note: undefined = лишити як було
+async function setMark(hid, date, value, amount, note) {
+  const prev = S.marks.get(hid + '|' + date) || {};
+  if (amount === undefined) amount = prev.amount ?? null;
+  if (note === undefined) note = prev.note || '';
+  const rec = { k: hid + '|' + date, habitId: hid, date, value, amount, note, updatedAt: Date.now(), dirty: true };
+  S.marks.set(rec.k, { value, amount, note });
   await db.put('marks', rec);
   scheduleSync();
 }
 async function saveHabit(data) {
   const now = Date.now();
   const fields = { name: data.name, full: data.full, min: data.min, kind: data.kind === 'count' ? 'count' : 'check',
-    perWeek: data.perWeek >= 1 && data.perWeek <= 6 ? data.perWeek : 7 };
+    perWeek: data.perWeek >= 1 && data.perWeek <= 6 ? data.perWeek : 7,
+    note: (data.note || '').slice(0, 300), askNote: !!data.askNote };
   if (fields.kind === 'count') {
     fields.target = data.target;
     fields.minAmount = data.minAmount;
@@ -301,7 +306,10 @@ function weekLine(h, date = S.selDate) {
   return done >= need ? `<span class="wk ok">Тиждень ✓ ${done}/${need}</span>` : `<span class="wk">Тиждень ${done}/${need}</span>`;
 }
 
+const noteOf = (hid, date) => (markOf(hid, date) || {}).note || '';
 function habitSub(h, v, date = S.selDate) {
+  const n = noteOf(h.id, date);
+  if (n) return `<span class="hn">${INOTE}${esc(n)}</span>`;
   if (isCount(h)) {
     const a = amt(h.id, date);
     const u = h.unit ? ' ' + esc(h.unit) : '';
@@ -355,6 +363,7 @@ function renderToday(el) {
         const v = val(h.id, date);
         return `<button class="${rowClass(h, v)}" data-act="habit" data-id="${h.id}" style="--i:${i}" aria-label="${esc(h.name)}">
           <span class="meta"><span class="name">${esc(h.name)}${weekLine(h)}</span><span class="sub">${habitSub(h, v)}</span></span>
+          ${h.askNote ? `<span class="hnote${noteOf(h.id, date) ? ' has' : ''}" role="button" tabindex="0" data-act="habit-note" data-id="${h.id}" aria-label="Нотатка за день">${INOTE}</span>` : ''}
           <span class="streak">${I.flame}<span>${streakLabel(h)}</span></span>
           <span class="check">${checkInner(h, v)}</span>
           ${isCount(h) ? `<span class="hbar"><i style="width:${barWidth(h)}%"></i></span>` : ''}</button>`;
@@ -415,6 +424,7 @@ function updateTodayDynamic(row) {
     const v = val(h.id, S.selDate);
     row.className = rowClass(h, v);
     row.querySelector('.sub').innerHTML = habitSub(h, v);
+    row.querySelector('.hnote')?.classList.toggle('has', !!noteOf(h.id, S.selDate));
     row.querySelector('.streak span').textContent = streakLabel(h);
     const nm = row.querySelector('.name');
     nm.innerHTML = esc(h.name) + weekLine(h);
@@ -484,7 +494,7 @@ function renderTable(el) {
     let cls = 'cell';
     if (d > S.today) cls += ' future';
     else if (d < h.start) cls += ' na';
-    else cls += ' v' + val(h.id, d);
+    else cls += ' v' + val(h.id, d) + (noteOf(h.id, d) ? ' nt' : '');
     if (d === S.today) cls += ' today';
     return `<button class="${cls}" data-act="cell" data-id="${h.id}" data-date="${d}" aria-label="${esc(h.name)}, ${parseKey(d).getDate()}"></button>`;
   }).join('')}</div>`).join('');
@@ -700,10 +710,20 @@ function openHabitSheet(h = null) {
       <div class="field"><label for="f-full">Повна мета</label><input id="f-full" maxlength="40" placeholder="Напр. лягти до 23:00" value="${esc(isCount(v) ? '' : v.full)}" autocomplete="off"></div>
       <div class="field"><label for="f-min">Мінімум на поганий день</label><input id="f-min" maxlength="40" placeholder="Напр. лягти до 00:00" value="${esc(isCount(v) ? '' : v.min)}" autocomplete="off"><small>Настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
     </div>
+    <div class="field"><label for="f-note">${INOTE}Нотатка до звички <span class="opt">необовʼязково</span></label>
+      <textarea id="f-note" class="note-input" rows="2" maxlength="300" placeholder="Навіщо мені це, як роблю, що допомагає…">${esc(v.note || '')}</textarea></div>
+    <div class="set-group">
+      <div class="set-row"><div class="l"><b>Нотатка при відмітці</b><span>Після відмітки зʼявиться віконце «Як пройшло?»</span></div>
+        <button type="button" class="switch" role="switch" aria-checked="${!!v.askNote}" aria-label="Питати нотатку при відмітці" data-asknote></button></div>
+    </div>
+    ${h ? recentNotesHTML(h) : ''}
     <button class="btn primary block press" data-save>${h ? 'Зберегти' : 'Додати'}</button>
     ${h ? '<button class="btn danger block press" data-del>Видалити звичку</button>' : ''}
   `, (sheet) => {
     const name = sheet.querySelector('#f-name');
+    const ask = sheet.querySelector('[data-asknote]');
+    ask.addEventListener('click', () => ask.setAttribute('aria-checked', ask.getAttribute('aria-checked') !== 'true'));
+    sheet.querySelectorAll('[data-note-day]').forEach((b) => b.addEventListener('click', () => openNoteSheet(h, b.dataset.noteDay)));
     const seg = sheet.querySelector('[data-kind-seg]');
     const applyKind = () => {
       seg.querySelectorAll('button').forEach((b) => { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
@@ -731,7 +751,8 @@ function openHabitSheet(h = null) {
     sheet.querySelector('[data-save]').addEventListener('click', async () => {
       const n = name.value.trim();
       if (!n) return bad(name);
-      const data = { id: h?.id, name: n, kind, perWeek: pw };
+      const data = { id: h?.id, name: n, kind, perWeek: pw,
+        note: sheet.querySelector('#f-note').value.trim(), askNote: ask.getAttribute('aria-checked') === 'true' };
       if (kind === 'count') {
         const tEl = sheet.querySelector('#f-target'), mEl = sheet.querySelector('#f-minamt');
         const target = parseNum(tEl.value);
@@ -788,10 +809,13 @@ function openAmountSheet(h, date, onDone) {
       <button type="button" class="chip glass press" data-set="${h.target}">Ціль · ${fmtNum(h.target)}</button>
       <button type="button" class="chip glass press" data-add="${step * 5}">+${step * 5}</button>
     </div>
+    ${h.askNote ? `<div class="field"><label for="n-text">${INOTE}Як пройшло?</label>
+      <textarea id="n-text" class="note-input" rows="3" maxlength="500" placeholder="${esc(notePlaceholder(h))}">${esc(noteOf(h.id, date))}</textarea></div>` : ''}
     <button class="btn primary block press" data-ok>Зберегти</button>
     <button class="btn block press" data-clear style="color:var(--muted)">Скинути</button>
   `, (sheet) => {
     const input = sheet.querySelector('[data-amount]');
+    const noteEl = sheet.querySelector('#n-text');
     const paint = (fromInput = false) => {
       if (!fromInput) input.value = fmtNum(a);
       const v = valueForAmount(h, a);
@@ -810,7 +834,7 @@ function openAmountSheet(h, date, onDone) {
     input.addEventListener('focus', () => input.select());
     input.addEventListener('input', () => { const n = parseNum(input.value); a = n ?? 0; paint(true); });
     const save = async (value) => {
-      await setMark(h.id, date, valueForAmount(h, value), value > 0 ? value : null);
+      await setMark(h.id, date, valueForAmount(h, value), value > 0 ? value : null, noteEl ? noteEl.value.trim() : undefined);
       closeSheet();
       if (onDone) onDone();
     };
@@ -820,6 +844,45 @@ function openAmountSheet(h, date, onDone) {
     paint();
   });
 }
+/* ===== Нотатка дня до звички ===== */
+const notePlaceholder = () => 'Що вдалось, що завадило, як почуваєшся…';
+function openNoteSheet(h, date, { afterMark = false } = {}) {
+  const v = val(h.id, date);
+  const label = v === 2 ? 'Виконано' : v === 1 ? 'Мінімум' : 'Не відмічено';
+  openSheet(`
+    <h2>${esc(h.name)}</h2>
+    <div class="amount-sub">${esc(date === S.today ? 'Сьогодні' : fmtLong.format(parseKey(date)))} · <b class="${v ? 'ok' : ''}">${label}</b></div>
+    ${h.note ? `<div class="habit-note-box">${INOTE}<span>${esc(h.note)}</span></div>` : ''}
+    <label for="n-text" class="sr-only">Нотатка за день</label>
+    <textarea id="n-text" class="note-input big" rows="5" maxlength="500" placeholder="${afterMark ? 'Як пройшло? ' : ''}${esc(notePlaceholder(h))}">${esc(noteOf(h.id, date))}</textarea>
+    <div class="row-actions">
+      <button class="btn block glass press" data-skip>${afterMark ? 'Пропустити' : 'Скасувати'}</button>
+      <button class="btn primary block press" data-ok>Зберегти</button>
+    </div>
+  `, (sheet) => {
+    const ta = sheet.querySelector('#n-text');
+    setTimeout(() => ta.focus(), 350);
+    sheet.querySelector('[data-skip]').addEventListener('click', () => closeSheet());
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      await setMark(h.id, date, val(h.id, date), undefined, ta.value.trim());
+      closeSheet();
+      toast(ta.value.trim() ? 'Нотатку збережено' : 'Нотатку прибрано');
+      const row = currentView()?.querySelector(`.habit[data-id="${h.id}"]`);
+      if (row) updateTodayDynamic(row);
+    });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
+  });
+}
+function recentNotesHTML(h) {
+  const list = [...S.marks.entries()]
+    .filter(([k, m]) => k.startsWith(h.id + '|') && m.note)
+    .map(([k, m]) => ({ date: k.split('|')[1], note: m.note, value: m.value }))
+    .sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8);
+  if (!list.length) return '';
+  return `<div class="field"><label>Останні нотатки</label><div class="notes-list">${list.map((n) =>
+    `<button type="button" class="note-item glass" data-note-day="${n.date}"><small>${esc(fmtWdShortDate.format(parseKey(n.date)))}</small><span>${esc(n.note)}</span></button>`).join('')}</div></div>`;
+}
+
 function scoreOfAmount(h, a) {
   const t = h.target, mn = minOf(h);
   if (a >= t) return 1;
@@ -949,6 +1012,7 @@ const fmtWdShortDate = new Intl.DateTimeFormat('uk', { weekday: 'short', day: 'n
 const fmtShortDM = new Intl.DateTimeFormat('uk', { day: 'numeric', month: 'short' });
 const ICAL = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
 const IBELL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
+const INOTE = '<svg class="i-note" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>';
 const ISUN = '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
 const ICLOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
@@ -1385,12 +1449,17 @@ views.addEventListener('click', async (e) => {
       });
       return;
     }
-    const v = nextVal(val(id, date));
+    const prevVal = val(id, date);
+    const v = nextVal(prevVal);
     ripple(t, e);
     popEl(t.querySelector('.check'));
     await setMark(id, date, v);
     updateTodayDynamic(t);
     celebrate(hb, date, before, t);
+    if (hb.askNote && prevVal === 0 && v > 0) setTimeout(() => openNoteSheet(hb, date, { afterMark: true }), 380);
+  } else if (act === 'habit-note') {
+    const hb = habitById(t.dataset.id);
+    if (hb) openNoteSheet(hb, S.selDate);
   } else if (act === 'day') {
     S.selDate = t.dataset.date;
     rerenderAnimated();

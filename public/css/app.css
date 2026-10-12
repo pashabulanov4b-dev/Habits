@@ -651,3 +651,30 @@ small.warn:empty { display: none; }
   .nextcard:hover, .planbar:hover { border-color: rgba(255,255,255,.28); }
   .cell:not(.future):not(.na):hover { transform: scale(1.12); }
 }
+
+/* ---------- Нотатки ---------- */
+.i-note { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.field > label .opt { font-weight: 600; color: var(--faint); font-size: 12px; margin-left: 4px; }
+.note-input { width: 100%; min-height: 64px; padding: 12px 14px; border-radius: 18px; font-size: 16px; line-height: 1.4; resize: vertical;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); outline: none; font-family: inherit; color: inherit; transition: border-color .25s; }
+.note-input:focus { border-color: var(--lime-line); }
+.note-input.big { min-height: 140px; }
+.note-input::placeholder { color: var(--faint); }
+.habit .hn { display: inline-flex; align-items: center; gap: 5px; color: rgba(242,244,247,.82); font-style: italic; max-width: 100%; }
+.habit .hn .i-note { width: 13px; height: 13px; color: var(--lime); }
+.hnote { width: 34px; height: 34px; border-radius: 17px; display: grid; place-items: center; flex-shrink: 0; color: rgba(242,244,247,.55);
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); transition: color .25s, background .25s, border-color .25s; }
+.hnote .i-note { width: 16px; height: 16px; }
+.hnote.has { color: var(--lime); border-color: var(--lime-line); background: var(--lime-soft); }
+.habit-note-box { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 14px; background: rgba(255,255,255,.05); color: var(--muted); font-size: 13px; line-height: 1.4; }
+.habit-note-box .i-note { margin-top: 1px; color: var(--lime); }
+.amount-sub b.ok { color: var(--lime); }
+.notes-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.note-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 14px; }
+.note-item small { font-size: 11px; font-weight: 700; color: var(--muted); }
+.note-item span { font-size: 14px; line-height: 1.35; }
+.cell.nt { position: relative; }
+.cell.nt::after { content: ""; position: absolute; top: -2px; right: -2px; width: 7px; height: 7px; border-radius: 4px; background: #F5B86A; box-shadow: 0 0 0 2px var(--bg); }
+@media (hover: hover) and (pointer: fine) { .hnote:hover { color: var(--text); border-color: rgba(255,255,255,.3); } .note-item:hover { border-color: rgba(255,255,255,.28); } }
+/* довгі листи прокручуються, а не стискають вміст (інакше блоки налазили один на одного) */
+.sheet > * { flex-shrink: 0; }

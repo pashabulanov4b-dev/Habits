@@ -124,3 +124,12 @@ test('проміжок часу і свій час нагадування', () =
   assert.equal(dueTasks({ t }, at(13, 0)).length, 0);
   assert.equal(taskMessage(t).body, 'Сьогодні о 14:20–18:00');
 });
+
+test('нотатки: до звички і до дня', () => {
+  const h = cleanHabit({ id: 'h-note1', name: 'Спорт', note: 'Для спини', askNote: true });
+  assert.deepEqual([h.note, h.askNote], ['Для спини', true]);
+  assert.equal(cleanHabit({ id: 'h-note2', name: 'x' }).askNote, false);
+  assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 'Біг 5 км' }).note, 'Біг 5 км');
+  assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 'x'.repeat(900) }).note.length, 500);
+  assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 42 }).note, '');
+});
