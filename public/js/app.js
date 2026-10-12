@@ -1041,7 +1041,8 @@ async function saveTask(data) {
   const time = data.time || '';
   const endTime = time && data.endTime && data.endTime > time ? data.endTime : '';
   const remindAt = data.remind ? data.remindAt || '' : '';
-  const fields = { title: data.title, date: data.date, time, endTime, remind: !!remindAt, remindAt };
+  const fields = { title: data.title, date: data.date, time, endTime, remind: !!remindAt, remindAt,
+    note: (data.note || '').slice(0, 500), askNote: !!data.askNote };
   if (t) {
     Object.assign(t, fields, { updatedAt: now, dirty: true });
   } else {
@@ -1075,6 +1076,12 @@ function planHead(eyebrow, title) {
   </div>`;
 }
 
+// нотатка під назвою: після виконання — «як пройшло», інакше — опис завдання
+function noteLine(t, compact) {
+  const txt = t.done && t.doneNote ? t.doneNote : t.note;
+  if (!txt) return '';
+  return `<span class="tn${t.done && t.doneNote ? ' res' : ''}${compact ? ' compact' : ''}">${INOTE}${esc(txt)}</span>`;
+}
 function taskRow(t, i, { carried = false, compact = false } = {}) {
   const meta = carried ? 'Перенесено ' + (t.date === addDays(S.today, -1) ? 'з учора' : 'з ' + fmtShortDM.format(parseKey(t.date))) : '';
   const now = isNow(t);
@@ -1084,7 +1091,9 @@ function taskRow(t, i, { carried = false, compact = false } = {}) {
     <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
     <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
       <span class="tt">${esc(t.title)}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
+      ${noteLine(t, compact)}
     </button>
+    ${t.askNote ? `<button class="tnote${t.doneNote ? ' has' : ''}" data-act="task-note" data-id="${t.id}" aria-label="Нотатка: ${esc(t.title)}">${INOTE}</button>` : ''}
     ${t.time || rem ? `<span class="ttime${t.endTime ? ' range' : ''}">${rem ? IBELL : ''}${timeRange(t)}</span>` : ''}
   </div>`;
 }
@@ -1242,10 +1251,20 @@ function openTaskSheet(task = null, date = S.today) {
     <div class="mcal" data-cal></div>
     <div class="field"><label>Час</label><div class="timerow" data-timerow></div><small class="warn" data-timehint></small></div>
     <div class="field"><label>${IBELL}Нагадування</label><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
+    <div class="field"><label for="t-note">${INOTE}Нотатка <span class="opt">необовʼязково</span></label>
+      <textarea id="t-note" class="note-input" rows="2" maxlength="500" placeholder="Деталі, адреса, що взяти з собою…">${esc(task?.note || '')}</textarea></div>
+    <div class="set-group">
+      <div class="set-row"><div class="l"><b>Нотатка при виконанні</b><span>Коли відмітиш виконаним — віконце «Як пройшло?»</span></div>
+        <button type="button" class="switch" role="switch" aria-checked="${!!task?.askNote}" aria-label="Питати нотатку при виконанні" data-asknote></button></div>
+    </div>
+    ${task?.doneNote ? `<div class="field"><label>Як пройшло</label><button type="button" class="note-item glass" data-open-result><span>${esc(task.doneNote)}</span></button></div>` : ''}
     <button class="btn primary block press" data-save></button>
     ${task ? `<div class="row-actions">${task.done ? '' : `<button class="btn block glass press" data-tomorrow>На завтра</button>`}<button class="btn danger block press" data-del>Видалити</button></div>` : ''}
   `, (sheet) => {
     const title = sheet.querySelector('#t-title');
+    const ask = sheet.querySelector('[data-asknote]');
+    ask.addEventListener('click', () => ask.setAttribute('aria-checked', ask.getAttribute('aria-checked') !== 'true'));
+    sheet.querySelector('[data-open-result]')?.addEventListener('click', () => openTaskNoteSheet(task));
     // Перемальовуємо частинами: поля часу НЕ чіпаємо, поки людина в них друкує,
     // інакше на компʼютері курсор вилітає з поля після першої цифри.
     const paint = () => { paintDates(); paintTime(); paintRem(true); };
@@ -1337,7 +1356,8 @@ function openTaskSheet(task = null, date = S.today) {
       if (!txt) { title.focus(); title.style.borderColor = '#FF8A80'; return; }
       if (time && endTime && endTime <= time) { toast('Кінець має бути пізніше за початок'); return; }
       const rt = remindTime();
-      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt });
+      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt,
+        note: sheet.querySelector('#t-note').value.trim(), askNote: ask.getAttribute('aria-checked') === 'true' });
       closeSheet();
       toast(task ? 'Збережено' : `Додано ${onDay(saved.date)}`);
       if (saved.remind) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));
@@ -1380,13 +1400,40 @@ async function toggleTask(id, btn) {
   row?.classList.toggle('done', !t.done);
   popEl(btn);
   await patchTask(id, patch);
+  const askNow = t.askNote && t.done;
   setTimeout(() => {
     rerender();
+    if (askNow) setTimeout(() => openTaskNoteSheet(t, { afterMark: true }), 150);
     if (!wasAllDone && todayAllDone() && S.planMode !== 'cal') {
       confetti(currentView()?.querySelector('.pprog') || null);
       toast('Усі справи на сьогодні зроблено');
     }
   }, 280);
+}
+function openTaskNoteSheet(t, { afterMark = false } = {}) {
+  const when = t.time ? ' · ' + timeRange(t) : '';
+  openSheet(`
+    <h2>${esc(t.title)}</h2>
+    <div class="amount-sub">${esc(relDay(t.date))}${esc(when)} · <b class="${t.done ? 'ok' : ''}">${t.done ? 'Виконано' : 'Ще не виконано'}</b></div>
+    ${t.note ? `<div class="habit-note-box">${INOTE}<span>${esc(t.note)}</span></div>` : ''}
+    <label for="n-text" class="sr-only">Як пройшло</label>
+    <textarea id="n-text" class="note-input big" rows="5" maxlength="500" placeholder="${afterMark ? 'Як пройшло? ' : ''}Результат, домовленості, що далі…">${esc(t.doneNote || '')}</textarea>
+    <div class="row-actions">
+      <button class="btn block glass press" data-skip>${afterMark ? 'Пропустити' : 'Скасувати'}</button>
+      <button class="btn primary block press" data-ok>Зберегти</button>
+    </div>
+  `, (sheet) => {
+    const ta = sheet.querySelector('#n-text');
+    setTimeout(() => ta.focus(), 350);
+    sheet.querySelector('[data-skip]').addEventListener('click', () => closeSheet());
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      await patchTask(t.id, { doneNote: ta.value.trim() });
+      closeSheet();
+      toast(ta.value.trim() ? 'Нотатку збережено' : 'Нотатку прибрано');
+      rerender();
+    });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
+  });
 }
 function todayAllDone() {
   const l = tasksOn(S.today);
@@ -1519,6 +1566,9 @@ views.addEventListener('click', async (e) => {
     rerenderAnimated();
   } else if (act === 'task-toggle') {
     await toggleTask(t.dataset.id, t);
+  } else if (act === 'task-note') {
+    const task = S.tasks.find((x) => x.id === t.dataset.id);
+    if (task) openTaskNoteSheet(task);
   } else if (act === 'task-edit') {
     const task = S.tasks.find((x) => x.id === t.dataset.id);
     if (task) openTaskSheet(task);

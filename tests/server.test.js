@@ -133,3 +133,10 @@ test('нотатки: до звички і до дня', () => {
   assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 'x'.repeat(900) }).note.length, 500);
   assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 42 }).note, '');
 });
+
+test('нотатки до завдань', () => {
+  const t = cleanTask({ id: 't-note1', title: 'Лікар', date: '2026-10-12', note: 'Взяти паспорт', askNote: true, doneNote: 'Все добре' });
+  assert.deepEqual([t.note, t.askNote, t.doneNote], ['Взяти паспорт', true, 'Все добре']);
+  const e = cleanTask({ id: 't-note2', title: 'x', date: '2026-10-12' });
+  assert.deepEqual([e.note, e.askNote, e.doneNote], ['', false, '']);
+});
