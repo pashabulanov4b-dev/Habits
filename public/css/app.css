@@ -396,10 +396,10 @@ svg { display: block; }
 .view[data-view="plan"] { padding-bottom: calc(var(--safe-bottom) + 200px); }
 .plan-top { display: flex; flex-direction: column; gap: 4px; }
 .plan-top .eyebrow { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.plan-head { flex-wrap: wrap; row-gap: 10px; align-items: center; }
-.plan-head h1 { margin: 0; white-space: nowrap; }
+.plan-head { flex-wrap: wrap; row-gap: 10px; align-items: center; column-gap: 10px; }
+.plan-head h1 { margin: 0; white-space: nowrap; font-size: clamp(24px, 7.4vw, 34px); }
 .pseg { display: flex; gap: 2px; padding: 4px; border-radius: 22px; margin-left: auto; }
-.pseg button { min-height: 38px; padding: 0 12px; border-radius: 18px; font-size: 13px; font-weight: 700; color: rgba(242,244,247,.8); display: flex; align-items: center; justify-content: center; transition: background .3s, color .3s; }
+.pseg button { min-height: 38px; padding: 0 clamp(8px, 2.6vw, 12px); border-radius: 18px; font-size: 13px; font-weight: 700; color: rgba(242,244,247,.8); display: flex; align-items: center; justify-content: center; transition: background .3s, color .3s; }
 .pseg button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
 .pseg button.on { background: rgba(255,255,255,.92); color: var(--bg); }
 
@@ -453,7 +453,7 @@ svg { display: block; }
 .tgroup-h b.lime { color: var(--lime); }
 .tgroup-h span { font-size: 12px; font-weight: 600; color: rgba(242,244,247,.55); }
 .tgroup-h em { margin-left: auto; font-style: normal; font-size: 12px; font-weight: 700; color: rgba(242,244,247,.6); }
-.task.compact { min-height: 44px; padding: 0; border-radius: 0; }
+.task.compact { min-height: 44px; padding: 0 6px 0 0; border-radius: 0; }
 .task.compact .tcheck::before { width: 24px; height: 24px; border-radius: 8px; }
 .task.compact .tcheck svg { width: 13px; height: 13px; }
 .task.compact .tt { font-size: 14px; font-weight: 600; }
@@ -680,11 +680,21 @@ small.warn:empty { display: none; }
 .sheet > * { flex-shrink: 0; }
 
 /* ---------- Нотатки до завдань ---------- */
-.tn { display: flex; align-items: center; gap: 5px; font-size: 12px; color: rgba(242,244,247,.72); font-style: italic; min-width: 0; }
-.tn .i-note { width: 12px; height: 12px; color: var(--muted); }
+/* нотатка: до 2 рядків у дні, 1 рядок у «Наперед», далі «…» — ніколи не виходить за картку */
+.tbody { flex: 1 1 0; width: 0; overflow: hidden; }
+.tbody > span { max-width: 100%; }
+.tn { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+  white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+  font-size: 12px; line-height: 1.35; color: rgba(242,244,247,.72); font-style: italic; }
+.tn.compact { -webkit-line-clamp: 1; line-clamp: 1; }
+.tn .i-note { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 4px; color: var(--muted); }
 .tn.res .i-note { color: var(--lime); }
-.tn { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; }
-.tn .i-note { display: inline-block; vertical-align: -2px; margin-right: 4px; }
+.tm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ttime, .tnote { flex-shrink: 0; }
+/* те саме для звичок: нотатка дня не розпирає рядок */
+.habit .meta { overflow: hidden; }
+.habit .sub .hn { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.habit .sub .hn .i-note { display: inline-block; vertical-align: -2px; margin-right: 4px; }
 .task.done .tn.res { opacity: 1; text-decoration: none; }
 .tnote { width: 34px; height: 34px; border-radius: 17px; display: grid; place-items: center; flex-shrink: 0; color: rgba(242,244,247,.55);
   background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); transition: color .25s, background .25s, border-color .25s; }
