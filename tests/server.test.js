@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeRecords, changedSince, cleanMark, cleanHabit, cleanTask } from '../api/_lib/merge.js';
+import { mergeRecords, changedSince, cleanMark, cleanHabit, cleanTask, cleanJournal } from '../api/_lib/merge.js';
 import { isDue, buildMessage, localParts, dueTasks, taskMessage } from '../api/_lib/reminder.js';
 
 const m = (habitId, date, value, updatedAt) => cleanMark({ habitId, date, value, updatedAt });
@@ -139,4 +139,14 @@ test('нотатки до завдань', () => {
   assert.deepEqual([t.note, t.askNote, t.doneNote], ['Взяти паспорт', true, 'Все добре']);
   const e = cleanTask({ id: 't-note2', title: 'x', date: '2026-10-12' });
   assert.deepEqual([e.note, e.askNote, e.doneNote], ['', false, '']);
+});
+
+test('щоденник: власні записи і позначка «в щоденнику»', () => {
+  const j = cleanJournal({ id: 'j-abc123', date: '2026-10-15', text: 'Гарний день', createdAt: 1, updatedAt: 2 });
+  assert.deepEqual([j.date, j.text, j.deleted], ['2026-10-15', 'Гарний день', false]);
+  assert.equal(cleanJournal({ id: 't-abc123', date: '2026-10-15' }), null);
+  assert.equal(cleanJournal({ id: 'j-abc123', date: 'вчора' }), null);
+  assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 'x', jAt: 77 }).jAt, 77);
+  assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2 }).jAt, 0);
+  assert.equal(cleanTask({ id: 't-note1', date: '2026-10-12', doneNote: 'ok', jAt: 5 }).jAt, 5);
 });

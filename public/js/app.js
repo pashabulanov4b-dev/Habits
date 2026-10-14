@@ -35,14 +35,20 @@ const S = {
   tasks: [],
   planMode: 'day',     // day | ahead | cal
   planDate: todayKey(),
-  calOffset: 0
+  calOffset: 0,
+  // щоденник
+  journal: [],
+  jFilter: 'all',   // all | me | habit | task
+  jSearch: false,
+  jQuery: ''
 };
 
 async function loadState() {
-  const [habits, marks, tasks] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks')]);
+  const [habits, marks, tasks, journal] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks'), db.getAll('journal')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
-  S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null, note: m.note || '' }]));
+  S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null, note: m.note || '', jAt: m.jAt || 0 }]));
   S.tasks = tasks.filter((t) => !t.deleted);
+  S.journal = journal.filter((j) => !j.deleted);
 }
 
 const markOf = (hid, date) => S.marks.get(hid + '|' + date);
@@ -159,12 +165,14 @@ const nextVal = (v) => (v === 0 ? 2 : v === 2 ? 1 : 0); // тап: викона�
 
 /* ================= Запис змін (спершу на телефон) ================= */
 // amount / note: undefined = лишити як було
-async function setMark(hid, date, value, amount, note) {
+async function setMark(hid, date, value, amount, note, jAt) {
   const prev = S.marks.get(hid + '|' + date) || {};
   if (amount === undefined) amount = prev.amount ?? null;
   if (note === undefined) note = prev.note || '';
-  const rec = { k: hid + '|' + date, habitId: hid, date, value, amount, note, updatedAt: Date.now(), dirty: true };
-  S.marks.set(rec.k, { value, amount, note });
+  if (jAt === undefined) jAt = prev.jAt || 0;
+  if (!note) jAt = 0;
+  const rec = { k: hid + '|' + date, habitId: hid, date, value, amount, note, jAt, updatedAt: Date.now(), dirty: true };
+  S.marks.set(rec.k, { value, amount, note, jAt });
   await db.put('marks', rec);
   scheduleSync();
 }
@@ -211,12 +219,14 @@ const I = {
   check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   flame: '<svg viewBox="0 0 24 24"><path d="M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-6 1-9z"/></svg>',
   share: '<svg viewBox="0 0 24 24"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
-  x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>',
+  book: '<svg viewBox="0 0 24 24"><path d="M5 4.5h11a3 3 0 0 1 3 3v12H8a3 3 0 0 1-3-3z"/><path d="M5 16.5a3 3 0 0 1 3-3h11M9 8.5h6"/></svg>'
 };
 
 /* ================= Навігація ================= */
 const views = document.getElementById('views');
-const TABS = ['today', 'plan', 'table', 'stats'];
+const TABS = ['today', 'plan', 'journal', 'table', 'stats'];
 
 function showTab(tab, { animate = true } = {}) {
   S.tab = tab;
@@ -247,6 +257,7 @@ function renderView(el = currentView()) {
   if (!el) return;
   if (el.dataset.view === 'today') renderToday(el);
   if (el.dataset.view === 'plan') renderPlan(el);
+  if (el.dataset.view === 'journal') renderJournal(el);
   if (el.dataset.view === 'table') renderTable(el);
   if (el.dataset.view === 'stats') renderStats(el);
 }
@@ -670,6 +681,10 @@ function openSheet(html, onMount) {
   if (onMount) onMount(wrap.querySelector('.sheet'));
   return wrap;
 }
+sheetRoot.addEventListener('click', (e) => {
+  const sw = e.target.closest('[data-journal]');
+  if (sw) sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
+});
 function closeSheet(instant = false) {
   const w = sheetRoot.querySelector('.sheet-wrap');
   if (!w) return;
@@ -810,7 +825,8 @@ function openAmountSheet(h, date, onDone) {
       <button type="button" class="chip glass press" data-add="${step * 5}">+${step * 5}</button>
     </div>
     ${h.askNote ? `<div class="field"><label for="n-text">${INOTE}Як пройшло?</label>
-      <textarea id="n-text" class="note-input" rows="3" maxlength="500" placeholder="${esc(notePlaceholder(h))}">${esc(noteOf(h.id, date))}</textarea></div>` : ''}
+      <textarea id="n-text" class="note-input" rows="3" maxlength="500" placeholder="${esc(notePlaceholder(h))}">${esc(noteOf(h.id, date))}</textarea></div>
+      ${journalSwitchHTML(journalOnFor((markOf(h.id, date) || {}).jAt), date)}` : ''}
     <button class="btn primary block press" data-ok>Зберегти</button>
     <button class="btn block press" data-clear style="color:var(--muted)">Скинути</button>
   `, (sheet) => {
@@ -834,7 +850,9 @@ function openAmountSheet(h, date, onDone) {
     input.addEventListener('focus', () => input.select());
     input.addEventListener('input', () => { const n = parseNum(input.value); a = n ?? 0; paint(true); });
     const save = async (value) => {
-      await setMark(h.id, date, valueForAmount(h, value), value > 0 ? value : null, noteEl ? noteEl.value.trim() : undefined);
+      const jOn = journalSwitchOn(sheet);
+      await setMark(h.id, date, valueForAmount(h, value), value > 0 ? value : null, noteEl ? noteEl.value.trim() : undefined,
+        noteEl ? journalStamp(jOn, (markOf(h.id, date) || {}).jAt) : undefined);
       closeSheet();
       if (onDone) onDone();
     };
@@ -855,6 +873,7 @@ function openNoteSheet(h, date, { afterMark = false } = {}) {
     ${h.note ? `<div class="habit-note-box">${INOTE}<span>${esc(h.note)}</span></div>` : ''}
     <label for="n-text" class="sr-only">Нотатка за день</label>
     <textarea id="n-text" class="note-input big" rows="5" maxlength="500" placeholder="${afterMark ? 'Як пройшло? ' : ''}${esc(notePlaceholder(h))}">${esc(noteOf(h.id, date))}</textarea>
+    ${journalSwitchHTML(journalOnFor((markOf(h.id, date) || {}).jAt), date)}
     <div class="row-actions">
       <button class="btn block glass press" data-skip>${afterMark ? 'Пропустити' : 'Скасувати'}</button>
       <button class="btn primary block press" data-ok>Зберегти</button>
@@ -864,11 +883,12 @@ function openNoteSheet(h, date, { afterMark = false } = {}) {
     setTimeout(() => ta.focus(), 350);
     sheet.querySelector('[data-skip]').addEventListener('click', () => closeSheet());
     sheet.querySelector('[data-ok]').addEventListener('click', async () => {
-      await setMark(h.id, date, val(h.id, date), undefined, ta.value.trim());
+      const jOn = journalSwitchOn(sheet);
+      await setMark(h.id, date, val(h.id, date), undefined, ta.value.trim(), journalStamp(jOn, (markOf(h.id, date) || {}).jAt));
       closeSheet();
-      toast(ta.value.trim() ? 'Нотатку збережено' : 'Нотатку прибрано');
+      toast(noteToast(ta.value.trim(), jOn));
       const row = currentView()?.querySelector(`.habit[data-id="${h.id}"]`);
-      if (row) updateTodayDynamic(row);
+      if (row) updateTodayDynamic(row); else rerender();
     });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
   });
@@ -1418,6 +1438,7 @@ function openTaskNoteSheet(t, { afterMark = false } = {}) {
     ${t.note ? `<div class="habit-note-box">${INOTE}<span>${esc(t.note)}</span></div>` : ''}
     <label for="n-text" class="sr-only">Як пройшло</label>
     <textarea id="n-text" class="note-input big" rows="5" maxlength="500" placeholder="${afterMark ? 'Як пройшло? ' : ''}Результат, домовленості, що далі…">${esc(t.doneNote || '')}</textarea>
+    ${journalSwitchHTML(journalOnFor(t.jAt), t.date)}
     <div class="row-actions">
       <button class="btn block glass press" data-skip>${afterMark ? 'Пропустити' : 'Скасувати'}</button>
       <button class="btn primary block press" data-ok>Зберегти</button>
@@ -1427,14 +1448,166 @@ function openTaskNoteSheet(t, { afterMark = false } = {}) {
     setTimeout(() => ta.focus(), 350);
     sheet.querySelector('[data-skip]').addEventListener('click', () => closeSheet());
     sheet.querySelector('[data-ok]').addEventListener('click', async () => {
-      await patchTask(t.id, { doneNote: ta.value.trim() });
+      const jOn = journalSwitchOn(sheet);
+      const txt = ta.value.trim();
+      await patchTask(t.id, { doneNote: txt, jAt: txt ? journalStamp(jOn, t.jAt) : 0 });
       closeSheet();
-      toast(ta.value.trim() ? 'Нотатку збережено' : 'Нотатку прибрано');
+      toast(noteToast(txt, jOn));
       rerender();
     });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
   });
 }
+/* ================= Щоденник ================= */
+// Перемикач «Додати в щоденник»: запамʼятовуємо останній вибір
+const journalPref = () => { try { return localStorage.getItem('journalDefault') !== '0'; } catch (e) { return true; } };
+const journalOnFor = (jAt) => (jAt > 0 ? true : journalPref());
+const journalStamp = (on, prev) => (on ? prev || Date.now() : 0);
+const journalSwitchOn = (sheet) => {
+  const sw = sheet.querySelector('[data-journal]');
+  if (!sw) return false;
+  const on = sw.getAttribute('aria-checked') === 'true';
+  try { localStorage.setItem('journalDefault', on ? '1' : '0'); } catch (e) { /* ок */ }
+  return on;
+};
+const noteToast = (txt, jOn) => (!txt ? 'Нотатку прибрано' : jOn ? 'Збережено · є в щоденнику' : 'Нотатку збережено');
+function journalSwitchHTML(on, date) {
+  const when = date === S.today ? 'за сьогодні' : 'за ' + fmtDayMonth.format(parseKey(date));
+  return `<div class="set-group"><div class="set-row jswitch"><span class="jic">${I.book}</span>
+    <div class="l"><b>Додати в щоденник</b><span>Зʼявиться в записах ${esc(when)}</span></div>
+    <button type="button" class="switch" role="switch" aria-checked="${on}" aria-label="Додати в щоденник" data-journal></button></div></div>`;
+}
+
+async function saveJournal(data) {
+  const now = Date.now();
+  let j = data.id ? S.journal.find((x) => x.id === data.id) : null;
+  if (j) Object.assign(j, { date: data.date, text: data.text, updatedAt: now, dirty: true });
+  else {
+    j = { id: 'j-' + now.toString(36) + Math.random().toString(36).slice(2, 7), date: data.date, text: data.text,
+      createdAt: now, updatedAt: now, deleted: false, dirty: true };
+    S.journal.push(j);
+  }
+  await db.put('journal', { ...j });
+  scheduleSync();
+  return j;
+}
+async function deleteJournal(id) {
+  const j = S.journal.find((x) => x.id === id);
+  if (!j) return;
+  S.journal = S.journal.filter((x) => x.id !== id);
+  await db.put('journal', { ...j, deleted: true, updatedAt: Date.now(), dirty: true });
+  scheduleSync();
+}
+
+// Усі записи: власні + нотатки звичок і завдань, позначені «в щоденник»
+function journalEntries() {
+  const out = S.journal.map((j) => ({ kind: 'me', ref: j.id, date: j.date, at: j.createdAt, text: j.text }));
+  for (const [k, m] of S.marks) {
+    if (!m.jAt || !m.note) continue;
+    const [hid, date] = k.split('|');
+    const h = habitById(hid);
+    if (!h) continue;
+    let label = h.name;
+    if (isCount(h) && m.amount != null) label += ` · ${fmtNum(m.amount)} / ${fmtNum(h.target)}${h.unit ? ' ' + h.unit : ''}`;
+    else if (m.value === 1) label += ' · мінімум';
+    out.push({ kind: 'habit', ref: k, date, at: m.jAt, text: m.note, label, done: m.value > 0 });
+  }
+  for (const t of S.tasks) {
+    if (!t.jAt || !t.doneNote) continue;
+    out.push({ kind: 'task', ref: t.id, date: t.date, at: t.jAt, text: t.doneNote, label: t.title + (t.time ? ' · ' + timeRange(t) : ''), done: t.done });
+  }
+  return out;
+}
+const J_FILTERS = [['all', 'Усе'], ['me', 'Мої'], ['habit', 'Звички'], ['task', 'План']];
+const jDayTitle = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.today, -1) ? 'Вчора' : cap(fmtDayMonth.format(parseKey(d))));
+const jDaySub = (d) => (d === S.today || d === addDays(S.today, -1) ? fmtWdShortDate.format(parseKey(d)) : fmtWeekday.format(parseKey(d)));
+
+function journalCard(e, i) {
+  const time = e.at ? fmtTime.format(new Date(e.at)) : '';
+  const pill = e.kind === 'me' ? `<span class="jpill jp-me">Мій запис</span>`
+    : `<span class="jpill jp-${e.kind}">${e.done ? I.check : ''}<span>${esc(e.label)}</span></span>`;
+  return `<button class="jcard glass" data-act="j-open" data-kind="${e.kind}" data-ref="${esc(e.ref)}" style="--i:${i}">
+    <span class="jtop">${pill}<span class="jtime">${esc(time)}</span></span>
+    <span class="jtext">${esc(e.text)}</span>
+  </button>`;
+}
+function journalListHTML() {
+  const all = journalEntries();
+  const q = S.jQuery.trim().toLowerCase();
+  const list = all.filter((e) => (S.jFilter === 'all' || e.kind === S.jFilter)
+    && (!q || e.text.toLowerCase().includes(q) || (e.label || '').toLowerCase().includes(q)))
+    .sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : b.at - a.at));
+  if (!all.length) {
+    return `<div class="empty glass jempty"><span class="jbig">${I.book}</span><h2>Тут буде твій щоденник</h2>
+      <p>Пиши про свій день через «+». А нотатки «Як пройшло?» до звичок і справ потрапляють сюди, якщо увімкнути «Додати в щоденник».</p>
+      <button class="btn primary press" data-act="j-add">${I.plus.replace('<svg', '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"')}Написати запис</button></div>`;
+  }
+  if (!list.length) return `<div class="jnone">${q ? 'Нічого не знайдено' : 'Тут поки порожньо'}</div>`;
+  let html = '', day = null, i = 0;
+  for (const e of list) {
+    if (e.date !== day) {
+      if (day) html += '</div>';
+      day = e.date;
+      html += `<div class="jday"><div class="jdayh"><b>${esc(jDayTitle(day))}</b><span>${esc(jDaySub(day))}</span></div>`;
+    }
+    html += journalCard(e, Math.min(i++, 12));
+  }
+  return html + '</div>';
+}
+function renderJournal(el) {
+  const total = journalEntries().length;
+  const month = cap(fmtMonth.format(parseKey(S.today)).replace(' р.', ''));
+  el.innerHTML = `
+    <div class="head">
+      <div><div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>${esc(month)}${total ? ' · ' + total + ' ' + plural(total, 'запис', 'записи', 'записів') : ''}</div><h1>Щоденник</h1></div>
+      <div class="head-actions">
+        <button class="icon-btn glass press${S.jSearch ? ' on' : ''}" data-act="j-search" aria-label="Пошук" aria-pressed="${S.jSearch}">${I.search}</button>
+        <button class="icon-btn lime press" data-act="j-add" aria-label="Новий запис">${I.plus}</button>
+      </div>
+    </div>
+    ${S.jSearch ? `<label class="jsearch glass">${I.search}<input data-jq type="search" placeholder="Пошук у записах" value="${esc(S.jQuery)}" autocomplete="off" enterkeyhint="search"></label>` : ''}
+    <div class="jchips" role="tablist" aria-label="Фільтр">${J_FILTERS.map(([k, l]) =>
+      `<button role="tab" class="jchip${S.jFilter === k ? ' on' : ' glass'}" data-act="j-filter" data-f="${k}" aria-selected="${S.jFilter === k}">${k !== 'all' ? `<i class="d-${k}"></i>` : ''}${l}</button>`).join('')}</div>
+    <div class="jlist" data-jlist>${journalListHTML()}</div>`;
+  const qi = el.querySelector('[data-jq]');
+  if (qi) qi.addEventListener('input', () => { S.jQuery = qi.value; el.querySelector('[data-jlist]').innerHTML = journalListHTML(); });
+}
+
+function openJournalSheet(j = null) {
+  let date = j ? j.date : S.today;
+  openSheet(`
+    <div class="jsheet-head"><h2>${j ? 'Запис' : 'Новий запис'}</h2>
+      <label class="jdate glass">${ICAL}<span data-jdate-l></span><input type="date" data-jdate value="${date}" max="${S.today}" aria-label="Дата запису"></label></div>
+    <label for="j-text" class="sr-only">Текст запису</label>
+    <textarea id="j-text" class="note-input big jta" rows="8" maxlength="3000" placeholder="Як пройшов день? Що вдалось, що думаєш, за що вдячний…">${esc(j ? j.text : '')}</textarea>
+    <button class="btn primary block press" data-ok>Зберегти запис</button>
+    ${j ? '<button class="btn danger block press" data-del>Видалити запис</button>' : ''}
+  `, (sheet) => {
+    const ta = sheet.querySelector('#j-text');
+    const di = sheet.querySelector('[data-jdate]');
+    const paintDate = () => { sheet.querySelector('[data-jdate-l]').textContent = date === S.today ? 'Сьогодні' : date === addDays(S.today, -1) ? 'Вчора' : fmtShortDM.format(parseKey(date)); };
+    di.addEventListener('change', () => { if (/^\d{4}-\d{2}-\d{2}$/.test(di.value)) { date = di.value; paintDate(); } });
+    paintDate();
+    if (!j) setTimeout(() => ta.focus(), 350);
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text) { ta.focus(); toast('Напиши хоч кілька слів'); return; }
+      await saveJournal({ id: j?.id, date, text });
+      closeSheet();
+      toast(j ? 'Запис оновлено' : 'Запис додано');
+      if (S.tab === 'journal') rerenderAnimated();
+    });
+    sheet.querySelector('[data-del]')?.addEventListener('click', async () => {
+      if (!confirm('Видалити цей запис?')) return;
+      await deleteJournal(j.id);
+      closeSheet();
+      toast('Запис видалено');
+      rerender();
+    });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
+  });
+}
+
 function todayAllDone() {
   const l = tasksOn(S.today);
   return l.length > 0 && l.every((t) => t.done) && carriedTasks().length === 0;
@@ -1572,6 +1745,22 @@ views.addEventListener('click', async (e) => {
   } else if (act === 'task-edit') {
     const task = S.tasks.find((x) => x.id === t.dataset.id);
     if (task) openTaskSheet(task);
+  } else if (act === 'j-filter') {
+    if (S.jFilter === t.dataset.f) return;
+    S.jFilter = t.dataset.f;
+    rerender();
+  } else if (act === 'j-search') {
+    S.jSearch = !S.jSearch;
+    if (!S.jSearch) S.jQuery = '';
+    rerender();
+    if (S.jSearch) currentView()?.querySelector('[data-jq]')?.focus();
+  } else if (act === 'j-add') {
+    openJournalSheet();
+  } else if (act === 'j-open') {
+    const { kind, ref } = t.dataset;
+    if (kind === 'me') { const j = S.journal.find((x) => x.id === ref); if (j) openJournalSheet(j); }
+    else if (kind === 'habit') { const [hid, date] = ref.split('|'); const hb = habitById(hid); if (hb) openNoteSheet(hb, date); }
+    else if (kind === 'task') { const task = S.tasks.find((x) => x.id === ref); if (task) openTaskNoteSheet(task); }
   } else if (act === 'dismiss-install') {
     localStorage.setItem('installDismissed', '1');
     t.closest('.install').remove();

@@ -35,7 +35,7 @@ export function cleanHabit(h) {
 export function cleanMark(m) {
   if (!m || !ID_RE.test(m.habitId) || !DATE_RE.test(m.date)) return null;
   const value = [0, 1, 2].includes(m.value) ? m.value : 0;
-  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), note: str(m.note, 500), updatedAt: num(m.updatedAt) };
+  return { k: m.habitId + '|' + m.date, habitId: m.habitId, date: m.date, value, amount: amount(m.amount), note: str(m.note, 500), jAt: num(m.jAt), updatedAt: num(m.updatedAt) };
 }
 
 const TASK_RE = /^t-[a-z0-9]{4,40}$/;
@@ -64,10 +64,26 @@ export function cleanTask(t) {
     note: str(t.note, 500),
     askNote: !!t.askNote,
     doneNote: str(t.doneNote, 500),
+    jAt: num(t.jAt), // >0 — нотатка «як пройшло» додана в щоденник
     order: num(t.order),
     createdAt: num(t.createdAt),
     updatedAt: num(t.updatedAt),
     deleted: !!t.deleted
+  };
+}
+
+const JOURNAL_RE = /^j-[a-z0-9]{4,40}$/;
+
+// Власний запис у щоденнику
+export function cleanJournal(j) {
+  if (!j || !JOURNAL_RE.test(j.id) || !DATE_RE.test(j.date)) return null;
+  return {
+    id: j.id,
+    date: j.date,
+    text: str(j.text, 3000),
+    createdAt: num(j.createdAt),
+    updatedAt: num(j.updatedAt),
+    deleted: !!j.deleted
   };
 }
 

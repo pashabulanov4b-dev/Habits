@@ -12,6 +12,7 @@ export const keys = {
   habits: (uid) => `${P}u:${uid}:h`,
   marks: (uid) => `${P}u:${uid}:m`,
   tasks: (uid) => `${P}u:${uid}:t`,
+  journal: (uid) => `${P}u:${uid}:j`,
   push: (uid) => `${P}u:${uid}:push`,
   pushUsers: `${P}push:users`
 };

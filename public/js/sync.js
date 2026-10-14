@@ -3,7 +3,7 @@
 import { db } from './db.js';
 
 // Що синхронізуємо: назва сховища → поле-ключ запису
-const STORES = [['habits', 'id'], ['marks', 'k'], ['tasks', 'id']];
+const STORES = [['habits', 'id'], ['marks', 'k'], ['tasks', 'id'], ['journal', 'id']];
 
 const listeners = new Set();
 let status = { state: 'idle', lastSync: null, pending: 0 };
