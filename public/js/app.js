@@ -1,6 +1,7 @@
 import { db, requestPersistence } from './db.js';
 import { initSync, scheduleSync, syncNow, onSyncStatus, getUserId, adoptUserId } from './sync.js';
 import { isIOS, isStandalone, getNotifySettings, setDaily, updateTime, ensureTaskPush } from './notify.js';
+import { openIntro, maybeShowIntro } from './intro.js';
 import { stagesOf, stageOn, planOn, sleepMinutes, NOTIFS, SLEEP_DEFAULTS, toMin, fromMin, isTime, WAKE_GRACE, STAGES } from './sleepcore.js';
 
 /* ================= Дати ================= */
@@ -996,6 +997,10 @@ async function openSettings() {
         <button class="small-btn press" data-sleep-entry>${S.sleepCfg && S.sleepCfg.active ? 'Відкрити' : 'Налаштувати'}</button></div>
     </div>
     <div class="set-group">
+      <div class="set-row"><div class="l"><b>Що вміє застосунок</b><span>Коротка презентація всіх можливостей</span></div>
+        <button class="small-btn press" data-intro>Показати</button></div>
+    </div>
+    <div class="set-group">
       <div class="set-row"><div class="l"><b>Резервна копія</b><span>${lastBackup ? 'Остання: ' + esc(fmtShortDM.format(new Date(lastBackup))) : 'Ще не робив'} · звички, план, щоденник, сон — в один файл</span></div>
         <button class="small-btn press" data-backup>Зберегти</button></div>
       <div class="set-row"><div class="l"><b>Відновити з файлу</b><span>Записи з файлу замінять ті самі записи тут</span></div>
@@ -1026,6 +1031,7 @@ async function openSettings() {
     sheet.querySelector('[data-sleep-entry]').addEventListener('click', () => {
       if (S.sleepCfg && S.sleepCfg.active) { closeSheet(); showTab('sleep'); } else openSleepSetup();
     });
+    sheet.querySelector('[data-intro]').addEventListener('click', () => { closeSheet(); setTimeout(openIntro, 250); });
     sheet.querySelector('[data-backup]').addEventListener('click', async () => {
       try { const r = await exportBackup(); if (r !== 'cancel') toast(r === 'shared' ? 'Копію створено' : 'Файл копії завантажено'); }
       catch (e) { toast('Не вдалося створити копію'); }
@@ -2545,5 +2551,6 @@ async function start() {
   const want = new URLSearchParams(location.search).get('tab');
   showTab(TABS.includes(want) ? want : 'today');
   initSync(onServerMerge);
+  maybeShowIntro();
 }
 start();

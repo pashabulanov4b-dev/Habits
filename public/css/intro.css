@@ -1,0 +1,176 @@
+/* «Звички» · вітальні сторінки (js/intro.js) — як у FinTrack: гортаються пальцем, мініатюри анімуються на активній сторінці. */
+.intro { position: fixed; inset: 0; z-index: 200; display: none; justify-content: center; align-items: stretch;
+  background: rgba(3,4,8,.6); -webkit-backdrop-filter: blur(18px) saturate(130%); backdrop-filter: blur(18px) saturate(130%); }
+.intro.open { display: flex; animation: inFade .3s ease both; }
+.intro.closing { animation: inFadeOut .3s ease both; }
+.in-box { position: relative; width: 100%; max-width: 520px; display: flex; flex-direction: column; overflow: hidden; background: #06070A; color: var(--text);
+  padding-top: env(safe-area-inset-top); padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+.in-box::before { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(380px 320px at 30% 12%, rgba(91,61,245,.42), transparent 72%), radial-gradient(300px 300px at 100% 62%, rgba(16,169,154,.28), transparent 72%), radial-gradient(260px 220px at 10% 100%, rgba(155,197,49,.18), transparent 72%); }
+@media (min-width: 561px) { .intro { align-items: center; } .in-box { height: min(800px, 92vh); border-radius: 40px; border: 1px solid rgba(255,255,255,.12); box-shadow: 0 30px 80px rgba(0,0,0,.55); } }
+.intro.open .in-box { animation: inPopBox .55s var(--spring) both; }
+.in-skip { position: absolute; z-index: 3; top: calc(env(safe-area-inset-top) + 12px); right: 16px; height: 36px; padding: 0 14px; border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.07); color: var(--muted); font-size: 13px; font-weight: 700; }
+.in-pages { position: relative; flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.in-pages::-webkit-scrollbar { display: none; }
+.in-page { flex: 0 0 100%; scroll-snap-align: center; scroll-snap-stop: always; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 60px 28px 8px; box-sizing: border-box; text-align: center; min-height: 0; }
+.in-page h2 { margin: 26px 0 10px; font-family: var(--round); font-size: 27px; font-weight: 800; letter-spacing: -.01em; line-height: 1.15; }
+.in-page p { margin: 0; max-width: 340px; font-size: 15.5px; line-height: 1.5; color: var(--muted); }
+.in-page h2, .in-page p { opacity: 0; transform: translate3d(0,14px,0); transition: opacity .5s ease, transform .6s var(--ease); }
+.in-page.on h2, .in-page.on p { opacity: 1; transform: none; }
+.in-page.on p { transition-delay: .08s; }
+.in-art { position: relative; width: min(310px, 84vw); height: 250px; display: flex; align-items: center; justify-content: center; }
+.in-art svg { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.in-page .in-art * { animation-play-state: paused; }
+.in-page.on .in-art * { animation-play-state: running; }
+.in-foot { position: relative; display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 8px 24px 0; }
+.in-dots { display: flex; gap: 7px; }
+.in-dots button { width: 7px; height: 7px; padding: 0; border-radius: 4px; background: rgba(255,255,255,.25); transition: width .4s var(--spring), background-color .3s; }
+.in-dots button.on { width: 22px; background: var(--lime); }
+.in-next { width: 100%; max-width: 360px; height: 54px; border-radius: 27px; font-size: 16px; font-weight: 800; color: #0B0D10; background: var(--lime);
+  box-shadow: 0 12px 30px rgba(212,245,122,.3), inset 0 1px 0 rgba(255,255,255,.6); transition: transform .35s var(--spring); }
+.in-next:active { transform: scale(.96); }
+
+/* спільне */
+.in-g { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 16px 36px rgba(0,0,0,.35); }
+.in-hab, .in-task, .in-jc, .in-sheet, .in-push, .in-file, .in-grid, .in-kpi span, .in-times span, .in-strip span {
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+
+/* 1. герой */
+.in-hero { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.in-orb { position: absolute; border-radius: 50%; filter: blur(30px); opacity: .65; }
+.in-orb.a { width: 150px; height: 150px; background: #5B3DF5; top: 0; left: 10px; animation: inFloat 6s ease-in-out infinite; }
+.in-orb.b { width: 130px; height: 130px; background: #10A99A; bottom: 6px; right: 6px; animation: inFloat 7s ease-in-out infinite reverse; }
+.in-orb.c { width: 90px; height: 90px; background: #9BC531; bottom: 30px; left: 40px; opacity: .4; animation: inFloat 8s ease-in-out infinite; }
+.in-ring { position: absolute; width: 190px; height: 190px; }
+.in-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.in-ring circle { stroke-width: 9; }
+.in-ring .t { stroke: rgba(255,255,255,.1); }
+.in-ring .v { stroke: var(--lime); stroke-dasharray: 86 100; filter: drop-shadow(0 0 8px rgba(212,245,122,.5)); animation: inDraw 1.4s var(--ease) .4s both; }
+.in-ring b { position: absolute; right: -6px; top: 6px; font-family: var(--round); font-size: 15px; font-weight: 800; color: var(--lime); padding: 4px 9px; border-radius: 12px;
+  background: rgba(212,245,122,.14); animation: inPop .5s var(--spring) 1.4s both; }
+.in-icon { position: relative; width: 96px; height: 96px; border-radius: 30px; display: grid; place-items: center; color: #0B0D10;
+  background: linear-gradient(150deg, #E6FF9C, var(--lime)); box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 20px 44px rgba(212,245,122,.35); animation: inPop .7s var(--spring) .1s both; }
+.in-icon svg { width: 52px; height: 52px; stroke-width: 3; }
+.in-spark { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: #fff; box-shadow: 0 0 12px #fff; opacity: 0; animation: inTwinkle 2.4s ease-in-out infinite; }
+.in-spark.s1 { top: 20px; right: 50px; animation-delay: .8s; } .in-spark.s2 { top: 110px; left: 22px; animation-delay: 1.4s; width: 5px; height: 5px; } .in-spark.s3 { bottom: 34px; right: 40px; animation-delay: 2s; width: 6px; height: 6px; }
+
+/* 2. звички */
+.in-list { position: relative; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.in-hab { position: relative; overflow: hidden; display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 20px; text-align: left; animation: inUp .5s var(--ease) both; }
+.in-hab.h2 { animation-delay: .1s; } .in-hab.h3 { animation-delay: .2s; }
+.in-hab .n { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.in-hab b { font-size: 14.5px; } .in-hab small { font-size: 11.5px; color: var(--muted); font-weight: 600; display: flex; gap: 4px; }
+.in-hab .fl { display: flex; align-items: center; gap: 2px; font-style: normal; font-size: 12px; font-weight: 800; color: var(--muted); }
+.in-hab .fl svg { width: 13px; height: 13px; }
+.in-hab .ck { width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; font-style: normal; border: 2px solid rgba(255,255,255,.28); color: transparent; flex-shrink: 0; }
+.in-hab .ck svg { width: 18px; height: 18px; stroke-width: 3; }
+.in-hab.h1 .ck { animation: inCheck .5s var(--spring) 1s both; }
+.in-hab.h3 .ck { background: var(--lime); border-color: var(--lime); color: #0B0D10; }
+.in-hab .ck.num { font-family: var(--round); font-weight: 800; font-size: 13px; animation: inCount .4s ease 2.2s both; }
+.in-hab .bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 95%; background: var(--lime); transform-origin: left; animation: inGrowX 1.2s var(--ease) 1.4s both; }
+.in-hab .cnt { position: relative; display: inline-block; height: 14px; overflow: hidden; font-style: normal; color: var(--lime); }
+.in-hab .cnt i { display: block; height: 14px; line-height: 14px; font-style: normal; animation: inRoll 1s var(--ease) 1.4s both; }
+.in-tap { position: absolute; right: 18px; top: 18px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,.55); opacity: 0; animation: inTap .7s ease-out .7s both; }
+
+/* 3. план */
+.in-plan { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.in-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-bottom: 4px; }
+.in-strip span { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 0; border-radius: 14px; animation: inPop .45s var(--spring) var(--d) both; }
+.in-strip span.sel { border-color: rgba(212,245,122,.5); background: rgba(255,255,255,.12); }
+.in-strip small { font-size: 10px; color: var(--muted); font-weight: 700; } .in-strip b { font-family: var(--round); font-size: 15px; }
+.in-strip i { width: 5px; height: 5px; border-radius: 3px; }
+.in-strip i.open { background: var(--lime); } .in-strip i.imp { width: 7px; height: 7px; background: #FF5A5F; box-shadow: 0 0 8px rgba(255,90,95,.9); animation: inGlow 1.6s ease-in-out infinite; }
+.in-task { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 18px; text-align: left; animation: inUp .5s var(--ease) both; }
+.in-task.t1 { border-color: rgba(255,90,95,.35); animation-delay: .4s; } .in-task.t2 { border-color: rgba(212,245,122,.4); background: rgba(212,245,122,.07); animation-delay: .55s; } .in-task.t3 { animation-delay: .7s; opacity: .7; }
+.in-task .bx { width: 22px; height: 22px; border-radius: 7px; border: 2px solid rgba(255,255,255,.3); flex-shrink: 0; display: grid; place-items: center; }
+.in-task .bx.on { background: var(--lime); border-color: var(--lime); color: #0B0D10; } .in-task .bx svg { width: 13px; height: 13px; stroke-width: 3.4; }
+.in-task span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.in-task b { font-size: 13.5px; display: flex; align-items: center; gap: 6px; } .in-task small { font-size: 11px; color: var(--muted); font-weight: 600; display: flex; align-items: center; gap: 3px; }
+.in-task small svg { width: 11px; height: 11px; }
+.in-task .imp { width: 7px; height: 7px; border-radius: 4px; background: #FF5A5F; box-shadow: 0 0 8px rgba(255,90,95,.85); flex-shrink: 0; }
+.in-task .rp { display: inline-flex; opacity: .6; } .in-task .rp svg { width: 12px; height: 12px; }
+.in-task.t2 small { color: var(--lime); }
+.in-task .tm { font-style: normal; font-size: 12px; font-weight: 800; padding: 5px 8px; border-radius: 10px; background: rgba(255,255,255,.08); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 4. щоденник */
+.in-jr { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.in-sheet { border-radius: 22px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; text-align: left; animation: inUp .5s var(--ease) both; }
+.in-sheet > b { font-family: var(--round); font-size: 16px; }
+.in-typed { min-height: 30px; padding: 6px 10px; border-radius: 12px; background: rgba(255,255,255,.06); font-size: 13px; display: flex; align-items: center; }
+.in-typed span { display: inline-block; overflow: hidden; white-space: nowrap; width: 0; border-right: 2px solid var(--lime); animation: inType 1.1s steps(15) .5s both, inBlink .9s steps(1) 1.6s infinite; }
+.in-sw { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; color: #6FE3D3; }
+.in-sw i { width: 38px; height: 22px; border-radius: 11px; background: rgba(255,255,255,.18); position: relative; animation: inSwBg .3s ease 1.8s both; }
+.in-sw i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 9px; background: #fff; animation: inSwKnob .4s var(--spring) 1.8s both; }
+.in-jc { border-radius: 18px; padding: 10px 12px; text-align: left; display: flex; flex-direction: column; gap: 6px; animation: inUp .5s var(--ease) both; }
+.in-jc.j1 { animation-delay: .3s; } .in-jc.j2 { animation-delay: 2.3s; border-color: rgba(212,245,122,.35); }
+.in-jc p { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text); }
+.in-jc .pill { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 10px; }
+.in-jc .pill svg { width: 11px; height: 11px; stroke-width: 3; }
+.in-jc .pill.me { background: rgba(111,227,211,.15); color: #6FE3D3; } .in-jc .pill.hb { background: rgba(212,245,122,.15); color: var(--lime); }
+
+/* 5. сон */
+.in-sleep { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.in-moon { width: 64px; height: 64px; border-radius: 22px; display: grid; place-items: center; background: rgba(169,184,255,.16); color: #A9B8FF; animation: inPop .6s var(--spring) .1s both; }
+.in-moon svg { width: 34px; height: 34px; }
+.in-times { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.in-times span { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 12px; border-radius: 18px; text-align: left; animation: inUp .5s var(--ease) .2s both; }
+.in-times span:first-child svg { color: #F5D06A; } .in-times span:last-child svg { color: #A9B8FF; }
+.in-times svg { width: 18px; height: 18px; }
+.in-times small { font-size: 11px; color: var(--muted); font-weight: 700; }
+.in-times .roll { position: relative; height: 32px; overflow: hidden; font-family: var(--round); font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.in-times .roll i { display: block; height: 32px; line-height: 32px; font-style: normal; animation: inRoll3 2.2s var(--ease) .5s both; }
+.in-steps { display: flex; gap: 6px; }
+.in-steps i { font-style: normal; font-size: 11px; font-weight: 800; padding: 6px 9px; border-radius: 12px; background: rgba(255,255,255,.07); color: var(--muted); animation: inStep .4s ease var(--d) both; }
+
+/* 6. прогрес */
+.in-stats { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.in-grid { display: grid; grid-template-columns: repeat(14, 1fr); gap: 4px; padding: 10px; border-radius: 18px; }
+.in-grid i { aspect-ratio: 1; border-radius: 5px; background: rgba(255,255,255,.08); animation: inPop .35s var(--spring) var(--d) both; }
+.in-grid i.v2 { background: var(--lime); } .in-grid i.v1 { background: rgba(212,245,122,.35); }
+.in-bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; padding: 0 6px; }
+.in-bars i { flex: 1; height: var(--h); border-radius: 6px; background: rgba(255,255,255,.16); transform-origin: bottom; animation: inGrowY .6s var(--spring) var(--d) both; }
+.in-bars i:last-child { background: var(--lime); }
+.in-kpi { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.in-kpi span { display: flex; flex-direction: column; padding: 8px 12px; border-radius: 16px; text-align: left; animation: inUp .5s var(--ease) 1.4s both; }
+.in-kpi b { font-family: var(--round); font-size: 20px; font-weight: 800; color: var(--lime); display: flex; align-items: center; gap: 3px; }
+.in-kpi b svg { width: 16px; height: 16px; } .in-kpi small { font-size: 11px; color: var(--muted); font-weight: 600; }
+
+/* 7. нагадування й копія */
+.in-last { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.in-push { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 20px; text-align: left; background: rgba(40,42,50,.85); animation: inDrop .6s var(--spring) .2s both; }
+.in-push.p2 { animation-delay: .7s; }
+.in-push > i { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: rgba(169,184,255,.18); color: #A9B8FF; }
+.in-push > i.lime { background: var(--lime); color: #0B0D10; } .in-push > i svg { width: 18px; height: 18px; }
+.in-push span { display: flex; flex-direction: column; } .in-push b { font-size: 13.5px; } .in-push small { font-size: 12px; color: var(--muted); }
+.in-file { margin-top: 8px; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 18px; font-size: 13px; font-weight: 700; animation: inPop .5s var(--spring) 1.3s both; }
+.in-file svg { width: 22px; height: 22px; color: var(--lime); }
+
+@keyframes inFade { from { opacity: 0; } } @keyframes inFadeOut { to { opacity: 0; } }
+@keyframes inPopBox { from { opacity: 0; transform: translateY(24px) scale(.97); } }
+@keyframes inUp { from { opacity: 0; transform: translate3d(0,16px,0); } to { opacity: 1; transform: none; } }
+@keyframes inPop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+@keyframes inFloat { 50% { transform: translate3d(14px,-10px,0); } }
+@keyframes inTwinkle { 0%, 100% { opacity: 0; transform: scale(.4); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes inDraw { from { stroke-dasharray: 0 100; } }
+@keyframes inGrowX { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes inGrowY { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes inTap { 0% { opacity: 0; transform: scale(.4); } 40% { opacity: .8; transform: scale(1); } 100% { opacity: 0; transform: scale(1.6); } }
+@keyframes inCheck { to { background: var(--lime); border-color: var(--lime); color: #0B0D10; } }
+@keyframes inCount { to { border-color: var(--lime); color: var(--lime); } }
+@keyframes inRoll { to { transform: translateY(-28px); } }
+@keyframes inRoll3 { 0%, 15% { transform: none; } 40%, 50% { transform: translateY(-32px); } 70%, 80% { transform: translateY(-64px); } 100% { transform: translateY(-96px); } }
+@keyframes inStep { to { background: rgba(212,245,122,.16); color: var(--lime); } }
+@keyframes inGlow { 50% { box-shadow: 0 0 2px rgba(255,90,95,.4); } }
+@keyframes inType { to { width: 15ch; } }
+@keyframes inBlink { 50% { border-color: transparent; } }
+@keyframes inSwBg { to { background: var(--lime); } }
+@keyframes inSwKnob { to { transform: translateX(16px); } }
+@keyframes inDrop { from { opacity: 0; transform: translate3d(0,-26px,0) scale(.92); } to { opacity: 1; transform: none; } }
+@media (max-height: 700px) { .in-art { height: 210px; transform: scale(.88); } .in-page h2 { margin-top: 10px; font-size: 23px; } .in-page { padding-top: 48px; } .in-page p { font-size: 14.5px; } }
+@media (prefers-reduced-motion: reduce) {
+  .intro *, .intro { animation: none !important; transition: none !important; }
+  .in-page h2, .in-page p { opacity: 1; transform: none; }
+  .in-typed span { width: 15ch; }
+}
