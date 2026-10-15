@@ -152,3 +152,46 @@ test('щоденник: власні записи і позначка «в що�
   assert.equal(cleanTask({ id: 't-imp1', date: '2026-10-12', important: 1 }).important, true);
   assert.equal(cleanTask({ id: 't-imp2', date: '2026-10-12' }).important, false);
 });
+
+import { stagesOf, stageOn, planOn, dueSleep, sleepMinutes } from '../public/js/sleepcore.js';
+import { cleanSleep } from '../api/_lib/merge.js';
+
+test('режим сну: етапи за замовчуванням і перерахунок', () => {
+  const st = stagesOf({});
+  assert.deepEqual(st.map((s) => [s.wake, s.bed, s.creative]), [
+    ['10:30', '02:30', '01:45'], ['09:45', '02:00', '01:15'], ['09:00', '01:15', '00:30'], ['08:00', '00:30', '23:45']]);
+  // інші вхідні часи → рівномірно: 01:00/09:00 → 23:00/07:00
+  const u = stagesOf({ curBed: '01:00', curWake: '09:00', tgtBed: '23:00', tgtWake: '07:00' });
+  assert.deepEqual(u.map((s) => [s.wake, s.bed]), [['08:30', '00:30'], ['08:00', '00:00'], ['07:30', '23:30'], ['07:00', '23:00']]);
+});
+
+test('режим сну: тижні, повтор тижня, рання зміна', () => {
+  const cfg = { active: true, start: '2026-10-12', repeats: 0 };
+  assert.equal(stageOn(cfg, '2026-10-11'), null);
+  assert.deepEqual(stageOn(cfg, '2026-10-18'), { week: 0, idx: 0 });
+  assert.deepEqual(stageOn(cfg, '2026-10-19'), { week: 1, idx: 1 });
+  assert.equal(stageOn({ ...cfg, repeats: 1 }, '2026-10-19').idx, 0);
+  assert.equal(stageOn(cfg, '2026-12-30').idx, 3);
+  const p = planOn(cfg, { '2026-10-13': { shift: '06:00' } }, '2026-10-13');
+  assert.deepEqual([p.wake, p.planWake, p.bed], ['06:00', '10:30', '02:30']);
+});
+
+test('режим сну: сповіщення вчасно, один раз, вимикаються окремо', () => {
+  const cfg = { active: true, start: '2026-10-12', notif: { coffee: false } };
+  const at = (h, m) => ({ date: '2026-10-13', minutes: h * 60 + m });
+  assert.deepEqual(dueSleep(cfg, {}, at(10, 33)).map((n) => n.key), ['wake']);
+  assert.deepEqual(dueSleep(cfg, {}, at(10, 36), { wake: Date.now() }).map((n) => n.key), ['light']);
+  assert.deepEqual(dueSleep(cfg, {}, at(14, 50)), []); // кава вимкнена
+  assert.deepEqual(dueSleep(cfg, {}, at(0, 35)).map((n) => n.key), ['dim']); // відбій 02:30 → 00:30
+  assert.deepEqual(dueSleep(cfg, {}, at(2, 16)).map((n) => n.key), ['bed']);
+  assert.equal(sleepMinutes('02:30', '10:30'), 480);
+  assert.equal(sleepMinutes('23:30', '07:00'), 450);
+});
+
+test('режим сну: очищення записів', () => {
+  const c = cleanSleep({ id: 's-cfg', active: true, start: '2026-10-12', curBed: '03:00', notif: { coffee: false }, repeats: 2 });
+  assert.deepEqual([c.active, c.curBed, c.notif.coffee, c.notif.wake, c.repeats], [true, '03:00', false, true, 2]);
+  assert.equal(cleanSleep({ id: 's-d-2026-10-13', wake: '10:41', bed: '25:00' }).bed, '');
+  assert.equal(cleanSleep({ id: 's-x' }), null);
+  assert.equal(cleanSleep({ id: 's-i-abcd12', text: 'ідея', date: '2026-10-13' }).text, 'ідея');
+});

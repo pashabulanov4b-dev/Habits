@@ -2,6 +2,7 @@ import webpush from 'web-push';
 import { redis, keys, noDb } from './_lib/redis.js';
 import { parse } from './_lib/merge.js';
 import { isDue, buildMessage, localParts, dueTasks, taskMessage, remindAtOf } from './_lib/reminder.js';
+import { dueSleep } from '../public/js/sleepcore.js';
 
 // Викликається за розкладом (GitHub Actions кожні ~15 хв) з заголовком Authorization: Bearer CRON_SECRET.
 // Надсилає: щоденне нагадування про звички + нагадування про завдання з дзвіночком.
@@ -37,6 +38,22 @@ export default async function handler(req, res) {
     const tasks = dueTasks(await redis.hgetall(keys.tasks(uid)), local, sentTasks);
     tasks.forEach((t) => { msgs.push(taskMessage(t)); sentTasks[t.id] = t.date + ' ' + remindAtOf(t); });
     next.taskSent = sentTasks;
+
+    // 3) «Режим сну»: підйом, світло, кава, тьмяний режим, ідеї, відбій
+    const sleepAll = await redis.hgetall(keys.sleep(uid));
+    if (sleepAll && sleepAll['s-cfg']) {
+      const recs = Object.values(sleepAll).map(parse);
+      const scfg = recs.find((r) => r.id === 's-cfg');
+      const days = Object.fromEntries(recs.filter((r) => r.kind === 'day' && !r.deleted).map((r) => [r.date, r]));
+      const sleepSent = { ...(cfg.sleepSent || {}) };
+      if (scfg && !scfg.deleted) {
+        dueSleep(scfg, days, local, sleepSent, now).forEach((n) => {
+          msgs.push({ title: n.title, body: n.body, tag: 'sleep-' + n.key, url: '/?tab=today' });
+          sleepSent[n.key] = now;
+        });
+      }
+      next.sleepSent = sleepSent;
+    }
 
     if (!msgs.length && next.lastSent === cfg.lastSent) continue;
 

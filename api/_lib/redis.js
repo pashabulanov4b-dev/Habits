@@ -13,6 +13,7 @@ export const keys = {
   marks: (uid) => `${P}u:${uid}:m`,
   tasks: (uid) => `${P}u:${uid}:t`,
   journal: (uid) => `${P}u:${uid}:j`,
+  sleep: (uid) => `${P}u:${uid}:s`,
   push: (uid) => `${P}u:${uid}:push`,
   pushUsers: `${P}push:users`
 };

@@ -23,6 +23,7 @@ export function cleanHabit(h) {
     unit: str(h.unit, 20),
     note: str(h.note, 300),
     askNote: !!h.askNote,
+    sleep: /^[a-z]{1,12}$/.test(h.sleep || '') ? h.sleep : '',
     perWeek: Number.isInteger(h.perWeek) && h.perWeek >= 1 && h.perWeek <= 7 ? h.perWeek : 7,
     order: num(h.order),
     start: DATE_RE.test(h.start) ? h.start : '1970-01-01',
@@ -86,6 +87,28 @@ export function cleanJournal(j) {
     updatedAt: num(j.updatedAt),
     deleted: !!j.deleted
   };
+}
+
+// «Режим сну»: налаштування (s-cfg), дні (s-d-YYYY-MM-DD) і «Нічні ідеї» (s-i-…)
+const SLEEP_RE = /^s-(cfg|d-\d{4}-\d{2}-\d{2}|i-[a-z0-9]{4,40})$/;
+const SLEEP_NOTIFS = ['wake', 'light', 'coffee', 'dim', 'ideas', 'bed'];
+const tm = (v) => (TIME_RE.test(v || '') ? v : '');
+export function cleanSleep(r) {
+  if (!r || !SLEEP_RE.test(r.id)) return null;
+  const base = { id: r.id, updatedAt: num(r.updatedAt), deleted: !!r.deleted };
+  if (r.id === 's-cfg') {
+    const notif = {};
+    for (const k of SLEEP_NOTIFS) notif[k] = !(r.notif && r.notif[k] === false);
+    return { ...base, kind: 'cfg', active: !!r.active, start: DATE_RE.test(r.start) ? r.start : '',
+      curBed: tm(r.curBed), curWake: tm(r.curWake), tgtBed: tm(r.tgtBed), tgtWake: tm(r.tgtWake),
+      repeats: Number.isInteger(r.repeats) && r.repeats >= 0 && r.repeats < 50 ? r.repeats : 0,
+      notif, melatonin: !!r.melatonin };
+  }
+  if (r.id.startsWith('s-d-')) {
+    const date = r.id.slice(4);
+    return { ...base, kind: 'day', date, bed: tm(r.bed), wake: tm(r.wake), shift: tm(r.shift) };
+  }
+  return { ...base, kind: 'idea', date: DATE_RE.test(r.date) ? r.date : '1970-01-01', text: str(r.text, 1000), createdAt: num(r.createdAt) };
 }
 
 export const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);

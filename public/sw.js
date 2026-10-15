@@ -1,6 +1,6 @@
 // Service worker: застосунок відкривається без інтернету + приймає push-сповіщення.
 // Після зміни списку файлів збільш VERSION.
-const VERSION = 'v16';
+const VERSION = 'v17';
 const CACHE = 'habits-' + VERSION;
 const SHELL = [
   '/',
@@ -10,6 +10,7 @@ const SHELL = [
   '/js/db.js',
   '/js/sync.js',
   '/js/notify.js',
+  '/js/sleepcore.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

@@ -1,6 +1,7 @@
 import { db, requestPersistence } from './db.js';
 import { initSync, scheduleSync, syncNow, onSyncStatus, getUserId, adoptUserId } from './sync.js';
 import { isIOS, isStandalone, getNotifySettings, setDaily, updateTime, ensureTaskPush } from './notify.js';
+import { stagesOf, stageOn, planOn, sleepMinutes, NOTIFS, SLEEP_DEFAULTS, toMin, fromMin, isTime, WAKE_GRACE, STAGES } from './sleepcore.js';
 
 /* ================= Дати ================= */
 const pad = (n) => String(n).padStart(2, '0');
@@ -40,15 +41,22 @@ const S = {
   journal: [],
   jFilter: 'all',   // all | me | habit | task
   jSearch: false,
-  jQuery: ''
+  jQuery: '',
+  // режим сну
+  sleepCfg: null,
+  sleepDays: {},
+  ideas: []
 };
 
 async function loadState() {
-  const [habits, marks, tasks, journal] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks'), db.getAll('journal')]);
+  const [habits, marks, tasks, journal, sleep] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks'), db.getAll('journal'), db.getAll('sleep')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
   S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null, note: m.note || '', jAt: m.jAt || 0 }]));
   S.tasks = tasks.filter((t) => !t.deleted);
   S.journal = journal.filter((j) => !j.deleted);
+  S.sleepCfg = sleep.find((r) => r.id === 's-cfg' && !r.deleted) || null;
+  S.sleepDays = Object.fromEntries(sleep.filter((r) => r.kind === 'day' && !r.deleted).map((r) => [r.date, r]));
+  S.ideas = sleep.filter((r) => r.kind === 'idea' && !r.deleted).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 const markOf = (hid, date) => S.marks.get(hid + '|' + date);
@@ -181,6 +189,7 @@ async function saveHabit(data) {
   const fields = { name: data.name, full: data.full, min: data.min, kind: data.kind === 'count' ? 'count' : 'check',
     perWeek: data.perWeek >= 1 && data.perWeek <= 6 ? data.perWeek : 7,
     note: (data.note || '').slice(0, 300), askNote: !!data.askNote };
+  if (data.sleep !== undefined) fields.sleep = data.sleep;
   if (fields.kind === 'count') {
     fields.target = data.target;
     fields.minAmount = data.minAmount;
@@ -230,7 +239,8 @@ const TABS = ['today', 'plan', 'journal', 'table', 'stats'];
 
 function showTab(tab, { animate = true } = {}) {
   S.tab = tab;
-  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  const nav = navTab();
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === nav));
   moveIndicator();
   planBar.classList.toggle('show', tab === 'plan');
   const old = views.querySelector('.view:not(.leave)');
@@ -244,9 +254,10 @@ function showTab(tab, { animate = true } = {}) {
     setTimeout(() => old.remove(), 230);
   }
 }
+const navTab = () => (S.tab === 'sleep' ? 'today' : S.tab); // «Режим сну» — частина розділу «Звички»
 function moveIndicator() {
   const ind = document.querySelector('.tab-indicator');
-  const tab = document.querySelector(`.tab[data-tab="${S.tab}"]`);
+  const tab = document.querySelector(`.tab[data-tab="${navTab()}"]`);
   if (!ind || !tab) return;
   ind.style.width = tab.offsetWidth + 'px';
   ind.style.height = tab.offsetHeight + 'px';
@@ -258,6 +269,7 @@ function renderView(el = currentView()) {
   if (el.dataset.view === 'today') renderToday(el);
   if (el.dataset.view === 'plan') renderPlan(el);
   if (el.dataset.view === 'journal') renderJournal(el);
+  if (el.dataset.view === 'sleep') renderSleep(el);
   if (el.dataset.view === 'table') renderTable(el);
   if (el.dataset.view === 'stats') renderStats(el);
 }
@@ -321,6 +333,7 @@ const noteOf = (hid, date) => (markOf(hid, date) || {}).note || '';
 function habitSub(h, v, date = S.selDate) {
   const n = noteOf(h.id, date);
   if (n) return `<span class="hn">${INOTE}${esc(n)}</span>`;
+  if (h.sleep) { const s = sleepSub(h, v, date); if (s) return s; }
   if (isCount(h)) {
     const a = amt(h.id, date);
     const u = h.unit ? ' ' + esc(h.unit) : '';
@@ -406,6 +419,7 @@ function renderToday(el) {
         <div class="val"><div><b data-pct>0%</b><small>дня</small></div></div></div>
       <div class="txt"><b data-headline>${sum.any ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.any ? sum.sub : 'Додай першу — і відмічай щодня.'}</span></div>
     </div>
+    ${sleepCardHTML()}
     </div>
     <div class="col">${list}</div>
     </div>`;
@@ -939,6 +953,10 @@ async function openSettings() {
       <div class="set-row"><div class="l"><b>Час</b></div><input type="time" value="${esc(ns.time)}" data-time aria-label="Час нагадування"></div>
     </div>
     <div class="set-group">
+      <div class="set-row"><div class="l"><b>Режим сну</b><span>${S.sleepCfg && S.sleepCfg.active ? 'Програма йде · тиждень ' + ((stageOn(S.sleepCfg, S.today) || { week: -1 }).week + 1) : '4 тижні, щоб засинати й вставати раніше'}</span></div>
+        <button class="small-btn press" data-sleep-entry>${S.sleepCfg && S.sleepCfg.active ? 'Відкрити' : 'Налаштувати'}</button></div>
+    </div>
+    <div class="set-group">
       <div class="set-row"><div class="l"><b>Синхронізація</b><span data-sync-text>${esc(syncText())}</span></div>
         <button class="small-btn press" data-sync-now>Зараз</button></div>
       <div class="set-row"><div class="l"><b>Код синхронізації</b><span class="code">${esc(uid)}</span></div>
@@ -959,6 +977,9 @@ async function openSettings() {
     });
     time.addEventListener('change', async () => {
       try { const s = await updateTime(time.value); if (s.enabled && s.daily) toast('Нагадаю о ' + time.value); } catch (e) { toast(e.message); }
+    });
+    sheet.querySelector('[data-sleep-entry]').addEventListener('click', () => {
+      if (S.sleepCfg && S.sleepCfg.active) { closeSheet(); showTab('sleep'); } else openSleepSetup();
     });
     sheet.querySelector('[data-sync-now]').addEventListener('click', () => syncNow({ onMerged: onServerMerge }));
     sheet.querySelector('[data-copy]').addEventListener('click', async () => {
@@ -1466,6 +1487,473 @@ function openTaskNoteSheet(t, { afterMark = false } = {}) {
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
   });
 }
+/* ================= Режим сну ================= */
+const IMOON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const ISUNRISE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v5M5.6 8.6l1.4 1.4M18.4 8.6L17 10M3 16h2M19 16h2M8 16a4 4 0 0 1 8 0M3 20h18"/></svg>';
+const IBULB = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>';
+const SLEEP_HABITS = {
+  wake: { name: 'Підйом вчасно', full: 'встати за планом', min: 'встати до +1 год' },
+  light: { name: 'Світло 20 хв', full: '20 хв денного світла', min: '5 хв світла' },
+  coffee: { name: 'Кава до 15:00', full: 'остання кава до 15:00', min: 'остання кава до 16:00' },
+  nap: { name: 'Денний сон ≤ 20 хв', full: 'без сну або ≤ 20 хв до 16:00', min: '≤ 30 хв' },
+  dim: { name: 'Тьмяний режим', full: 'тепле світло за 2 год до відбою', min: 'за 1 год до відбою' },
+  ideas: { name: 'Скинути ідеї', full: '5 хв записати всі ідеї', min: 'хоч одне речення' },
+  bed: { name: 'Відбій вчасно', full: 'лягти за планом', min: 'лягти до +30 хв' },
+  melatonin: { name: 'Мелатонін', full: 'за призначенням лікаря', min: 'за призначенням лікаря', note: 'Тільки після консультації з лікарем.' }
+};
+const SLEEP_ORDER = ['wake', 'light', 'coffee', 'nap', 'dim', 'ideas', 'bed'];
+const sleepHabit = (key) => S.habits.find((h) => h.sleep === key);
+const sleepActive = () => !!(S.sleepCfg && S.sleepCfg.active);
+const sleepPlan = (date = S.today) => (sleepActive() ? planOn(S.sleepCfg, S.sleepDays, date) : null);
+const nowHHMM = () => { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const bedAbsM = (t) => { const m = toMin(t); return m < 12 * 60 ? m + 1440 : m; };
+const fmtDur = (m) => (m == null ? '—' : `${Math.floor(m / 60)} год${m % 60 ? ' ' + (m % 60) + ' хв' : ''}`);
+
+async function putSleep(rec) {
+  const r = { ...rec, updatedAt: Date.now(), dirty: true };
+  await db.put('sleep', r);
+  if (r.id === 's-cfg') S.sleepCfg = r.deleted ? null : r;
+  else if (r.kind === 'day') { if (r.deleted) delete S.sleepDays[r.date]; else S.sleepDays[r.date] = r; }
+  else { S.ideas = S.ideas.filter((x) => x.id !== r.id); if (!r.deleted) S.ideas.unshift(r); S.ideas.sort((a, b) => b.createdAt - a.createdAt); }
+  scheduleSync();
+  return r;
+}
+const saveSleepCfg = (patch) => putSleep({ id: 's-cfg', kind: 'cfg', ...(S.sleepCfg || {}), ...patch });
+const setSleepDay = (date, patch) => putSleep({ id: 's-d-' + date, kind: 'day', date, bed: '', wake: '', shift: '', ...(S.sleepDays[date] || {}), ...patch });
+
+async function ensureSleepHabits() {
+  const want = SLEEP_ORDER.concat(S.sleepCfg && S.sleepCfg.melatonin ? ['melatonin'] : []);
+  for (const key of want) {
+    if (sleepHabit(key)) continue;
+    const d = SLEEP_HABITS[key];
+    await saveHabit({ name: d.name, full: d.full, min: d.min, kind: 'check', perWeek: 7, note: d.note || '', askNote: false, sleep: key });
+  }
+  const mel = sleepHabit('melatonin');
+  if (mel && !(S.sleepCfg && S.sleepCfg.melatonin)) await deleteHabit(mel.id);
+}
+
+// Підпис звички сну в списку: час береться з поточного етапу
+function sleepSub(h, v, date) {
+  const p = sleepPlan(date);
+  if (!p) return h.sleep === 'melatonin' ? 'Тільки після консультації з лікарем' : '';
+  const day = S.sleepDays[date] || {};
+  const nextDay = S.sleepDays[addDays(date, 1)] || {};
+  switch (h.sleep) {
+    case 'wake': return day.wake ? `Встав о <b class="amt">${day.wake}</b> · план ${p.wake}` : `О ${p.wake}${p.shift ? ' · рання зміна' : ''} · допуск +${WAKE_GRACE} хв`;
+    case 'light': return `До ${fromMin(toMin(p.wake) + 30)} · тап — таймер на 20 хв`;
+    case 'coffee': return 'Остання — не пізніше 15:00';
+    case 'nap': return 'Максимум 20 хв і не після 16:00';
+    case 'dim': return `З ${fromMin(toMin(p.bed) - 120)} · тепле світло, Night Shift`;
+    case 'ideas': return `О ${p.creative} · тап — записати ідеї`;
+    case 'bed': return nextDay.bed ? `Ліг о <b class="amt">${nextDay.bed}</b> · план ${p.bed}` : `О ${p.bed} · не спиш 20 хв — встань, без телефона`;
+    case 'melatonin': return 'Тільки після консультації з лікарем';
+  }
+  return '';
+}
+
+// Тап по звичці сну (ще не відміченій): свої віконця замість простої галочки
+function sleepTap(h, date) {
+  if (!sleepActive()) return false;
+  if (h.sleep === 'wake' || h.sleep === 'bed') { openSleepTimeSheet(h, date); return true; }
+  if (h.sleep === 'light' && date === S.today) { openLightTimer(h); return true; }
+  if (h.sleep === 'ideas') { openIdeasSheet(h, date); return true; }
+  return false;
+}
+
+async function markSleepHabit(h, date, v) {
+  await setMark(h.id, date, v);
+  const row = currentView()?.querySelector(`.habit[data-id="${h.id}"]`);
+  if (row) { ripple(row); popEl(row.querySelector('.check')); updateTodayDynamic(row); } else rerender();
+}
+
+function openSleepTimeSheet(h, date) {
+  const isWake = h.sleep === 'wake';
+  // відбій після півночі — це ще «вчорашній» день
+  let hDate = date;
+  if (!isWake && date === S.today && new Date().getHours() < 6) hDate = addDays(date, -1);
+  const p = sleepPlan(hDate);
+  const logDate = isWake ? hDate : addDays(hDate, 1); // відбій пишемо в запис ранку, що за ним
+  const plan = isWake ? p.wake : p.bed;
+  const now = nowHHMM();
+  const near = Math.abs(((toMin(now) - toMin(plan) + 1440 + 720) % 1440) - 720) <= 180;
+  const start = (S.sleepDays[logDate] || {})[isWake ? 'wake' : 'bed'] || (date === S.today && near ? now : plan);
+  openSheet(`
+    <h2>${isWake ? 'О котрій встав?' : 'О котрій ліг?'}</h2>
+    <div class="amount-sub">${esc(hDate === S.today ? 'Сьогодні' : fmtLong.format(parseKey(hDate)))} · план <b>${plan}</b>${isWake && p.shift ? ' (рання зміна)' : ''} · вчасно до ${fromMin(toMin(plan) + WAKE_GRACE)}</div>
+    <div class="sleep-time"><input type="time" data-st value="${start}" aria-label="Час"></div>
+    <div class="amount-status" data-verdict></div>
+    <button class="btn primary block press" data-ok>Зберегти</button>
+  `, (sheet) => {
+    const inp = sheet.querySelector('[data-st]');
+    const verdict = () => {
+      if (!isTime(inp.value)) return null;
+      const late = isWake ? toMin(inp.value) - toMin(plan) : bedAbsM(inp.value) - bedAbsM(plan);
+      return late <= WAKE_GRACE ? 2 : 1;
+    };
+    const paint = () => {
+      const v = verdict();
+      sheet.querySelector('[data-verdict]').innerHTML = v === 2 ? '<b class="ok">Вчасно</b> · зараховано повністю'
+        : v === 1 ? `Пізніше плану — зарахую як мінімум` : '';
+    };
+    inp.addEventListener('input', paint);
+    paint();
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const v = verdict();
+      if (!v) { inp.focus(); return; }
+      await setSleepDay(logDate, { [isWake ? 'wake' : 'bed']: inp.value });
+      closeSheet();
+      await markSleepHabit(h, hDate, v);
+      if (hDate !== date) toast('Зараховано за вчора');
+      else toast(v === 2 ? (isWake ? 'Встав вчасно' : 'Ліг вчасно') : 'Записано');
+    });
+  });
+}
+
+// Таймер світла: 20 хв. Початок памʼятаємо, тож можна вийти із застосунку.
+const LIGHT_MS = 20 * 60e3;
+const lightStart = () => { try { const v = JSON.parse(localStorage.getItem('lightTimer') || 'null'); return v && v.date === S.today ? v.at : 0; } catch (e) { return 0; } };
+function openLightTimer(h) {
+  let tick = null;
+  const C = 2 * Math.PI * 70;
+  openSheet(`
+    <h2>Світло 20 хв</h2>
+    <div class="amount-sub">Вийди надвір або сядь під яскраву лампу</div>
+    <div class="ltimer"><svg viewBox="0 0 160 160"><circle class="track" cx="80" cy="80" r="70"/><circle class="bar" cx="80" cy="80" r="70" stroke-dasharray="${C}" stroke-dashoffset="${C}" data-lbar/></svg>
+      <div class="ltime"><b data-lt>20:00</b><small data-ls>готовий</small></div></div>
+    <button class="btn primary block press" data-lgo>Старт</button>
+    <div class="row-actions">
+      <button class="btn block glass press" data-lshort>Було менше</button>
+      <button class="btn block glass press" data-ldone>Вже зробив</button>
+    </div>
+  `, (sheet) => {
+    const go = sheet.querySelector('[data-lgo]');
+    const finish = async (v) => {
+      clearInterval(tick);
+      try { localStorage.removeItem('lightTimer'); } catch (e) { /* ок */ }
+      closeSheet();
+      await markSleepHabit(h, S.today, v);
+      toast(v === 2 ? 'Світло зараховано' : 'Зараховано як мінімум');
+    };
+    const paint = () => {
+      const at = lightStart();
+      const left = at ? Math.max(0, LIGHT_MS - (Date.now() - at)) : LIGHT_MS;
+      const sec = Math.ceil(left / 1000);
+      sheet.querySelector('[data-lt]').textContent = `${pad(Math.floor(sec / 60))}:${pad(sec % 60)}`;
+      sheet.querySelector('[data-ls]').textContent = at ? (left ? 'іде' : 'готово!') : 'готовий';
+      sheet.querySelector('[data-lbar]').style.strokeDashoffset = C * (left / LIGHT_MS);
+      go.textContent = at ? 'Скинути' : 'Старт';
+      if (at && !left) { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); finish(2); }
+    };
+    go.addEventListener('click', () => {
+      try {
+        if (lightStart()) localStorage.removeItem('lightTimer');
+        else localStorage.setItem('lightTimer', JSON.stringify({ date: S.today, at: Date.now() }));
+      } catch (e) { /* ок */ }
+      paint();
+    });
+    sheet.querySelector('[data-lshort]').addEventListener('click', () => finish(1));
+    sheet.querySelector('[data-ldone]').addEventListener('click', () => finish(2));
+    tick = setInterval(() => { if (!sheet.isConnected) { clearInterval(tick); return; } paint(); }, 1000);
+    paint();
+  });
+}
+
+// «Скинути ідеї» → окремий список «Нічні ідеї»
+function openIdeasSheet(h, date) {
+  const today = S.ideas.filter((x) => x.date === date);
+  openSheet(`
+    <h2>Скинути ідеї</h2>
+    <div class="amount-sub">5 хвилин — запиши все, що крутиться в голові. Далі тільки спокійні справи.</div>
+    <label for="i-text" class="sr-only">Ідеї</label>
+    <textarea id="i-text" class="note-input big" rows="6" maxlength="1000" placeholder="Ідеї, справи на завтра, думки…"></textarea>
+    ${today.length ? `<div class="field"><label>${IBULB}Уже записано сьогодні</label><div class="notes-list">${today.map((x) => `<div class="note-item glass"><span>${esc(x.text)}</span></div>`).join('')}</div></div>` : ''}
+    <button class="btn primary block press" data-ok>${h ? 'Зберегти і відмітити' : 'Зберегти'}</button>
+  `, (sheet) => {
+    const ta = sheet.querySelector('#i-text');
+    setTimeout(() => ta.focus(), 350);
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (text) {
+        const now = Date.now();
+        await putSleep({ id: 's-i-' + now.toString(36) + Math.random().toString(36).slice(2, 6), kind: 'idea', date, text, createdAt: now });
+      }
+      closeSheet();
+      if (h) await markSleepHabit(h, date, text || today.length ? 2 : 1);
+      else rerender();
+      toast(text ? 'Ідеї збережено в «Нічні ідеї»' : 'Готово');
+    });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sheet.querySelector('[data-ok]').click(); });
+  });
+}
+function openIdeaEdit(idea) {
+  openSheet(`
+    <h2>Нічна ідея</h2>
+    <div class="amount-sub">${esc(fmtLong.format(parseKey(idea.date)))}</div>
+    <textarea id="i-text" class="note-input big" rows="6" maxlength="1000">${esc(idea.text)}</textarea>
+    <button class="btn primary block press" data-ok>Зберегти</button>
+    <button class="btn danger block press" data-del>Видалити</button>
+  `, (sheet) => {
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const text = sheet.querySelector('#i-text').value.trim();
+      await putSleep({ ...idea, text, deleted: !text });
+      closeSheet(); rerender();
+    });
+    sheet.querySelector('[data-del]').addEventListener('click', async () => {
+      await putSleep({ ...idea, deleted: true });
+      closeSheet(); toast('Видалено'); rerender();
+    });
+  });
+}
+
+// Картка на екрані «Звички»
+function sleepCardHTML() {
+  if (!sleepActive() || S.selDate !== S.today) return '';
+  const cfg = S.sleepCfg;
+  const p = sleepPlan();
+  if (!p) {
+    const n = Math.max(0, -Math.round((parseKey(S.today) - parseKey(cfg.start)) / 864e5));
+    return `<button class="sleepcard glass press" data-act="sleep-open"><span class="sc-ic">${IMOON}</span>
+      <span class="sc-txt"><small>Режим сну</small><b>Старт ${n === 1 ? 'завтра' : 'через ' + n + ' ' + plural(n, 'день', 'дні', 'днів')}</b></span>${I.right}</button>`;
+  }
+  const hint = sleepHint(p);
+  return `<button class="sleepcard glass press" data-act="sleep-open"><span class="sc-ic">${IMOON}</span>
+    <span class="sc-txt"><small>Режим сну · етап ${p.idx + 1} з ${STAGES}</small>
+      <b>Підйом ${p.wake} · Відбій ${p.bed}</b>${hint ? `<em>${esc(hint)}</em>` : ''}</span>${I.right}</button>`;
+}
+function sleepHint(p) {
+  const y = S.sleepDays[addDays(S.today, -1)];
+  if (y && y.shift) return `Після ранньої зміни не відсипайся довше ніж до ${fromMin(toMin(p.planWake) + 60)}`;
+  if (p.shift) return `Сьогодні рання зміна — підйом о ${p.shift}`;
+  return '';
+}
+
+function sleepStreak() {
+  const h = sleepHabit('wake');
+  if (!h) return 0;
+  let d = val(h.id, S.today) === 2 ? S.today : addDays(S.today, -1), n = 0;
+  while (val(h.id, d) === 2 && d >= S.sleepCfg.start) { n++; d = addDays(d, -1); }
+  return n;
+}
+function onTimeIn(from, to) {
+  const h = sleepHabit('wake');
+  let n = 0;
+  for (let d = from; d <= to; d = addDays(d, 1)) if (h && val(h.id, d) === 2) n++;
+  return n;
+}
+async function repeatSleepWeek() {
+  const st = stageOn(S.sleepCfg, S.today);
+  if (!st || st.idx === 0) { toast('Це вже перший етап'); return; }
+  await saveSleepCfg({ repeats: (S.sleepCfg.repeats || 0) + 1 });
+  try { localStorage.setItem('sleepRepeatAsked', String(st.week)); } catch (e) { /* ок */ }
+  toast('Цей тиждень — знову попередній етап');
+  rerenderAnimated();
+}
+
+function sleepChartHTML() {
+  const days = [];
+  for (let i = 29; i >= 0; i--) days.push(addDays(S.today, -i));
+  const pts = days.map((d) => {
+    const p = sleepPlan(d);
+    const w = (S.sleepDays[d] || {}).wake;
+    return { d, plan: p ? toMin(p.wake) : null, act: isTime(w) ? toMin(w) : null };
+  });
+  const vals = pts.flatMap((x) => [x.plan, x.act]).filter((x) => x != null);
+  if (!pts.some((x) => x.act != null)) return `<div class="sc-empty">Тут зʼявиться графік, щойно почнеш відмічати «Підйом вчасно».</div>`;
+  let lo = Math.min(...vals) - 30, hi = Math.max(...vals) + 30;
+  lo = Math.floor(lo / 60) * 60; hi = Math.ceil(hi / 60) * 60;
+  const W = 320, H = 150, L = 38, R = 8, T = 10, B = 22;
+  const x = (i) => L + (W - L - R) * i / 29;
+  const y = (m) => T + (H - T - B) * (m - lo) / (hi - lo); // раніше — вище
+  let planPath = '', prev = null;
+  pts.forEach((p, i) => {
+    if (p.plan == null) { prev = null; return; }
+    planPath += prev == null ? `M${x(i).toFixed(1)},${y(p.plan).toFixed(1)}` : `H${x(i).toFixed(1)}V${y(p.plan).toFixed(1)}`;
+    prev = p.plan;
+  });
+  const act = pts.map((p, i) => (p.act == null ? null : [x(i), y(p.act), p])).filter(Boolean);
+  const line = act.map((a, i) => (i ? 'L' : 'M') + a[0].toFixed(1) + ',' + a[1].toFixed(1)).join('');
+  const grid = [];
+  for (let m = lo; m <= hi; m += 60) grid.push(`<line x1="${L}" x2="${W - R}" y1="${y(m)}" y2="${y(m)}"/><text x="${L - 6}" y="${y(m) + 3.5}" text-anchor="end">${fromMin(m)}</text>`);
+  const lbl = [0, 15, 29].map((i) => `<text x="${x(i)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === 29 ? 'end' : 'middle'}">${esc(fmtShortDM.format(parseKey(days[i])))}</text>`).join('');
+  return `<svg class="schart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Час підйому за 30 днів проти плану">
+    <g class="grid">${grid.join('')}</g>
+    <path class="plan" d="${planPath}"/>
+    <path class="act" d="${line}"/>
+    ${act.map(([cx, cy, p]) => `<circle class="${p.plan != null && p.act - p.plan <= WAKE_GRACE ? 'ok' : 'late'}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.4"/>`).join('')}
+    <g class="xl">${lbl}</g></svg>
+    <div class="slegend"><span><i class="l-act"></i>Фактичний підйом</span><span><i class="l-plan"></i>План</span></div>`;
+}
+
+function renderSleep(el) {
+  const cfg = S.sleepCfg;
+  if (!sleepActive()) {
+    el.innerHTML = `
+      <div class="head"><div class="sl-back"><button class="icon-btn glass press" data-act="sleep-back" aria-label="Назад">${I.left}</button>
+        <div><div class="eyebrow">Звички</div><h1>Режим сну</h1></div></div></div>
+      <div class="empty glass"><span class="jbig sl">${IMOON}</span><h2>Перезапуск сну за 4 тижні</h2>
+        <p>Щотижня підйом і відбій зсуваються трохи раніше. Застосунок сам додасть звички, нагадуватиме про світло, каву й відбій і покаже прогрес.</p>
+        <button class="btn primary press" data-act="sleep-setup">Налаштувати</button></div>`;
+    return;
+  }
+  const st = stageOn(cfg, S.today);
+  const stages = stagesOf(cfg);
+  const p = sleepPlan();
+  const wk = st ? st.week + 1 : 0;
+  const title = !st ? 'Скоро старт' : st.idx === STAGES - 1 && wk > STAGES ? 'Ціль тримається' : `Етап ${st.idx + 1} з ${STAGES}`;
+  // пропозиція повторити етап, якщо минулого тижня вставав вчасно менше 5 разів із 7
+  let banner = '';
+  if (st && st.week >= 1 && st.idx > 0) {
+    const ws = addDays(cfg.start, (st.week - 1) * 7);
+    const n = onTimeIn(ws, addDays(ws, 6));
+    let asked = '';
+    try { asked = localStorage.getItem('sleepRepeatAsked') || ''; } catch (e) { /* ок */ }
+    if (n < 5 && asked !== String(st.week)) {
+      banner = `<div class="sl-banner glass"><b>Минулого тижня встав вчасно ${n} з 7</b><span>Етап краще повторити — так зсув закріпиться.</span>
+        <div class="row-actions"><button class="btn block glass press" data-act="sleep-norepeat" data-w="${st.week}">Ні, далі</button><button class="btn primary block press" data-act="sleep-repeat">Повторити тиждень</button></div></div>`;
+    }
+  }
+  const hint = p ? sleepHint(p) : '';
+  // журнал за 7 днів
+  const rows = [];
+  let sum = 0, cnt = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(S.today, -i);
+    const r = S.sleepDays[d] || {};
+    const dur = sleepMinutes(r.bed, r.wake);
+    if (dur != null) { sum += dur; cnt++; }
+    rows.push(`<button class="sl-row" data-act="sleep-day" data-date="${d}"><span class="d">${esc(i === 0 ? 'Сьогодні' : i === 1 ? 'Вчора' : cap(fmtWdShortDate.format(parseKey(d))))}${r.shift ? ' <i class="shift">зміна</i>' : ''}</span>
+      <span class="t">${r.bed || '—'} → ${r.wake || '—'}</span><span class="dur">${dur != null ? fmtDur(dur) : ''}</span></button>`);
+  }
+  const shifts = Object.values(S.sleepDays).filter((r) => r.shift && r.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const ws7 = addDays(S.today, -6);
+  el.innerHTML = `
+    <div class="head"><div class="sl-back"><button class="icon-btn glass press" data-act="sleep-back" aria-label="Назад">${I.left}</button>
+      <div><div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>Режим сну${st ? ' · тиждень ' + wk : ''}</div><h1>${esc(title)}</h1></div></div>
+      <div class="head-actions"><button class="icon-btn glass press" data-act="sleep-setup" aria-label="Налаштування режиму сну">${I.gear}</button></div></div>
+    ${banner}
+    <div class="cols">
+    <div class="col sticky">
+    ${p ? `<div class="sl-today glass">
+      <div class="sl-big"><span>${ISUNRISE}<small>Підйом${p.shift ? ' · зміна' : ''}</small><b>${p.wake}</b></span><span>${IMOON}<small>Відбій</small><b>${p.bed}</b></span></div>
+      <div class="sl-small"><span>Світло до <b>${fromMin(toMin(p.wake) + 30)}</b></span><span>Кава до <b>15:00</b></span><span>Тьмяне з <b>${fromMin(toMin(p.bed) - 120)}</b></span><span>Ідеї о <b>${p.creative}</b></span></div>
+      ${hint ? `<div class="sl-hint">${esc(hint)}</div>` : ''}
+    </div>` : `<div class="sl-today glass"><div class="sl-hint">Програма почнеться ${esc(fmtLong.format(parseKey(cfg.start)))}.</div></div>`}
+    <div class="sl-stages">${stages.map((s, i) => `<div class="sl-stage${st && st.idx === i ? ' on' : ''}${st && st.idx > i ? ' past' : ''}"><small>Етап ${i + 1}${i === STAGES - 1 ? '+' : ''}</small><b>${s.wake}</b><span>${s.bed}</span></div>`).join('')}</div>
+    ${st && st.idx > 0 ? `<button class="btn block glass press sl-rep" data-act="sleep-repeat">Повторити тиждень (етап ${st.idx})</button>` : ''}
+    <div class="sl-kpis">
+      <div class="glass"><b>${sleepStreak()}</b><small>${plural(sleepStreak(), 'день', 'дні', 'днів')} поспіль вчасно</small></div>
+      <div class="glass"><b>${onTimeIn(ws7 < cfg.start ? cfg.start : ws7, S.today)}/7</b><small>підйомів вчасно за тиждень</small></div>
+      <div class="glass"><b>${cnt ? fmtDur(Math.round(sum / cnt)).replace(' год', 'г').replace(' хв', 'хв') : '—'}</b><small>середній сон за тиждень</small></div>
+    </div>
+    </div>
+    <div class="col">
+    <div class="sl-sec glass"><div class="sl-h"><b>Підйом за 30 днів</b></div>${sleepChartHTML()}</div>
+    <div class="sl-sec glass"><div class="sl-h"><b>Журнал сну</b><span>тап — змінити</span></div>${rows.join('')}</div>
+    <div class="sl-sec glass"><div class="sl-h"><b>Ранні зміни</b><button class="small-btn press" data-act="sleep-shift">Додати</button></div>
+      ${shifts.length ? shifts.map((r) => `<button class="sl-row" data-act="sleep-day" data-date="${r.date}"><span class="d">${esc(cap(fmtWdShortDate.format(parseKey(r.date))))}</span><span class="t">підйом ${r.shift}</span><span class="dur"></span></button>`).join('')
+        : '<div class="sc-empty">У день зміни підйом і світло нагадаю за часом зміни, а відбій — за планом.</div>'}</div>
+    <div class="sl-sec glass"><div class="sl-h"><b>Нічні ідеї</b><button class="small-btn press" data-act="sleep-idea">Записати</button></div>
+      ${S.ideas.length ? S.ideas.slice(0, 30).map((x) => `<button class="sl-idea" data-act="idea-open" data-id="${x.id}"><small>${esc(fmtShortDM.format(parseKey(x.date)))}</small><span>${esc(x.text)}</span></button>`).join('')
+        : '<div class="sc-empty">Тут збиратиметься все, що запишеш у «Скинути ідеї».</div>'}</div>
+    </div>
+    </div>`;
+}
+
+function openSleepDaySheet(date) {
+  const r = S.sleepDays[date] || {};
+  openSheet(`
+    <h2>Ніч на ${esc(fmtDayMonth.format(parseKey(date)))}</h2>
+    <div class="amount-sub">Відбій напередодні ввечері → підйом цього ранку</div>
+    <div class="field-row">
+      <div class="field"><label>Ліг</label><input type="time" data-bed value="${r.bed || ''}"></div>
+      <div class="field"><label>Встав</label><input type="time" data-wake value="${r.wake || ''}"></div>
+    </div>
+    <div class="field"><label>Рання зміна · свій час підйому <span class="opt">необовʼязково</span></label><input type="time" data-shift value="${r.shift || ''}"></div>
+    <div class="amount-status" data-dur></div>
+    <button class="btn primary block press" data-ok>Зберегти</button>
+  `, (sheet) => {
+    const q = (s) => sheet.querySelector(s);
+    const paint = () => { const d = sleepMinutes(q('[data-bed]').value, q('[data-wake]').value); q('[data-dur]').innerHTML = d != null ? `Сон: <b class="ok">${fmtDur(d)}</b>` : ''; };
+    sheet.querySelectorAll('input').forEach((i) => i.addEventListener('input', paint));
+    paint();
+    q('[data-ok]').addEventListener('click', async () => {
+      await setSleepDay(date, { bed: q('[data-bed]').value, wake: q('[data-wake]').value, shift: q('[data-shift]').value });
+      closeSheet(); toast('Збережено'); rerender();
+    });
+  });
+}
+function openShiftSheet() {
+  openSheet(`
+    <h2>Рання зміна</h2>
+    <div class="amount-sub">Підйом і світло цього дня — за часом зміни, відбій — за планом. Наступного ранку не відсипайся більше ніж +1 год.</div>
+    <div class="field-row">
+      <div class="field"><label>День</label><input type="date" data-d value="${addDays(S.today, 1)}" min="${S.today}"></div>
+      <div class="field"><label>Підйом</label><input type="time" data-t value="06:00"></div>
+    </div>
+    <button class="btn primary block press" data-ok>Додати</button>
+  `, (sheet) => {
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const d = sheet.querySelector('[data-d]').value, t = sheet.querySelector('[data-t]').value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !isTime(t)) { toast('Вкажи день і час'); return; }
+      await setSleepDay(d, { shift: t });
+      closeSheet(); toast('Зміну додано'); rerender();
+    });
+  });
+}
+
+function openSleepSetup() {
+  const c = { ...SLEEP_DEFAULTS, notif: {}, ...(S.sleepCfg || {}) };
+  const active = sleepActive();
+  const notif = Object.fromEntries(NOTIFS.map(([k]) => [k, !(c.notif && c.notif[k] === false)]));
+  const tIn = (k, label) => `<div class="field"><label>${label}</label><input type="time" data-c="${k}" value="${esc(c[k])}"></div>`;
+  openSheet(`
+    <h2>Режим сну</h2>
+    <div class="amount-sub">4 тижні: щотижня підйом і відбій трохи раніше. Якщо твої часи інші — зсунь, етапи перерахуються рівномірно.</div>
+    <div class="field-row">${tIn('curBed', 'Зараз засинаю')}${tIn('curWake', 'Зараз встаю')}</div>
+    <div class="field-row">${tIn('tgtBed', 'Ціль: відбій')}${tIn('tgtWake', 'Ціль: підйом')}</div>
+    <div class="field"><label>Старт</label><input type="date" data-start value="${esc(c.start || S.today)}"></div>
+    <div class="sl-stages" data-prev></div>
+    <div class="field"><label>${IBELL}Сповіщення</label></div>
+    <div class="set-group">${NOTIFS.map(([k, l]) => `<div class="set-row"><div class="l"><b>${esc(l)}</b></div><button type="button" class="switch" role="switch" aria-checked="${notif[k]}" data-n="${k}" aria-label="${esc(l)}"></button></div>`).join('')}</div>
+    <div class="set-group"><div class="set-row"><div class="l"><b>Мелатонін</b><span>Звичка вимкнена за замовчуванням. Тільки після консультації з лікарем.</span></div>
+      <button type="button" class="switch" role="switch" aria-checked="${!!c.melatonin}" data-mel aria-label="Мелатонін"></button></div></div>
+    <button class="btn primary block press" data-ok>${active ? 'Зберегти' : 'Почати програму'}</button>
+    ${active ? '<button class="btn danger block press" data-off>Завершити програму</button>' : ''}
+  `, (sheet) => {
+    const val2 = (k) => sheet.querySelector(`[data-c="${k}"]`).value;
+    const paint = () => {
+      const cfg = {}; Object.keys(SLEEP_DEFAULTS).forEach((k) => { cfg[k] = val2(k); });
+      sheet.querySelector('[data-prev]').innerHTML = stagesOf(cfg).map((s, i) => `<div class="sl-stage"><small>Етап ${i + 1}${i === STAGES - 1 ? '+' : ''}</small><b>${s.wake}</b><span>${s.bed}</span></div>`).join('');
+    };
+    sheet.querySelectorAll('[data-c]').forEach((i) => i.addEventListener('input', paint));
+    sheet.querySelectorAll('.switch').forEach((sw) => sw.addEventListener('click', () => sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'))));
+    paint();
+    sheet.querySelector('[data-ok]').addEventListener('click', async () => {
+      const patch = { active: true, start: sheet.querySelector('[data-start]').value || S.today, repeats: S.sleepCfg ? S.sleepCfg.repeats || 0 : 0,
+        notif: Object.fromEntries([...sheet.querySelectorAll('[data-n]')].map((sw) => [sw.dataset.n, sw.getAttribute('aria-checked') === 'true'])),
+        melatonin: sheet.querySelector('[data-mel]').getAttribute('aria-checked') === 'true' };
+      for (const k of Object.keys(SLEEP_DEFAULTS)) { const v = val2(k); if (!isTime(v)) { toast('Заповни всі часи'); return; } patch[k] = v; }
+      if (S.sleepCfg && S.sleepCfg.start !== patch.start) patch.repeats = 0;
+      const first = !active;
+      await saveSleepCfg(patch);
+      await ensureSleepHabits();
+      if (first && !S.tasks.some((t) => t.title.startsWith('Записатися до Hausarzt'))) {
+        await saveTask({ title: 'Записатися до Hausarzt → направлення до Schlafmediziner', date: S.today, note: 'Мелатонін — тільки після консультації.' });
+      }
+      closeSheet();
+      toast(first ? 'Програму запущено' : 'Збережено');
+      if (Object.values(patch.notif).some(Boolean)) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));
+      if (S.tab === 'sleep') rerenderAnimated(); else showTab('sleep');
+    });
+    sheet.querySelector('[data-off]')?.addEventListener('click', async () => {
+      if (!confirm('Завершити програму? Звички сну зникнуть зі списку, журнал і ідеї залишаться.')) return;
+      await saveSleepCfg({ active: false });
+      for (const k of Object.keys(SLEEP_HABITS)) { const h = sleepHabit(k); if (h) await deleteHabit(h.id); }
+      closeSheet(); toast('Програму завершено'); rerenderAnimated();
+    });
+  });
+}
+
 /* ================= Щоденник ================= */
 // Перемикач «Додати в щоденник»: запамʼятовуємо останній вибір
 const journalPref = () => { try { return localStorage.getItem('journalDefault') !== '0'; } catch (e) { return true; } };
@@ -1678,6 +2166,7 @@ views.addEventListener('click', async (e) => {
       return;
     }
     const prevVal = val(id, date);
+    if (hb.sleep && prevVal === 0 && sleepTap(hb, date)) return;
     const v = nextVal(prevVal);
     ripple(t, e);
     popEl(t.querySelector('.check'));
@@ -1753,6 +2242,27 @@ views.addEventListener('click', async (e) => {
   } else if (act === 'task-edit') {
     const task = S.tasks.find((x) => x.id === t.dataset.id);
     if (task) openTaskSheet(task);
+  } else if (act === 'sleep-open') {
+    showTab('sleep');
+  } else if (act === 'sleep-back') {
+    S.selDate = S.today;
+    showTab('today');
+  } else if (act === 'sleep-setup') {
+    openSleepSetup();
+  } else if (act === 'sleep-repeat') {
+    await repeatSleepWeek();
+  } else if (act === 'sleep-norepeat') {
+    try { localStorage.setItem('sleepRepeatAsked', t.dataset.w); } catch (err) { /* ок */ }
+    rerender();
+  } else if (act === 'sleep-day') {
+    openSleepDaySheet(t.dataset.date);
+  } else if (act === 'sleep-shift') {
+    openShiftSheet();
+  } else if (act === 'sleep-idea') {
+    openIdeasSheet(null, S.today);
+  } else if (act === 'idea-open') {
+    const idea = S.ideas.find((x) => x.id === t.dataset.id);
+    if (idea) openIdeaEdit(idea);
   } else if (act === 'j-filter') {
     if (S.jFilter === t.dataset.f) return;
     S.jFilter = t.dataset.f;

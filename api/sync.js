@@ -1,5 +1,5 @@
 import { redis, keys, noDb } from './_lib/redis.js';
-import { USER_RE, cleanHabit, cleanMark, cleanTask, cleanJournal, mergeRecords, changedSince } from './_lib/merge.js';
+import { USER_RE, cleanHabit, cleanMark, cleanTask, cleanJournal, cleanSleep, mergeRecords, changedSince } from './_lib/merge.js';
 
 const MAX_ITEMS = 5000;
 
@@ -8,7 +8,8 @@ const KINDS = {
   habits: [keys.habits, cleanHabit, (r) => r.id],
   marks: [keys.marks, cleanMark, (r) => r.k],
   tasks: [keys.tasks, cleanTask, (r) => r.id],
-  journal: [keys.journal, cleanJournal, (r) => r.id]
+  journal: [keys.journal, cleanJournal, (r) => r.id],
+  sleep: [keys.sleep, cleanSleep, (r) => r.id]
 };
 
 export default async function handler(req, res) {
