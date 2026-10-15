@@ -891,3 +891,186 @@ small.warn:empty { display: none; }
 .wdpick:empty { display: none; }
 .wdpick .wd { min-height: 40px; border-radius: 14px; font-size: 13px; font-weight: 800; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: rgba(242,244,247,.75); transition: background .2s; }
 .wdpick .wd.on { background: var(--lime); color: #0B0D10; border-color: transparent; }
+
+/* =====================================================================
+   Дизайн 2 — простіше й спокійніше (жовтень 2026)
+   Одна шапка, один перемикач, тихіше скло, менше кольорів.
+   ===================================================================== */
+:root { --lav: #B8B4FF; --card: rgba(255,255,255,.055); --line: rgba(255,255,255,.085); }
+.b1 { opacity: .3; } .b2 { opacity: .2; } .b3 { opacity: .1; }
+.glass { background: var(--card); border-color: var(--line); box-shadow: inset 0 1px 0 rgba(255,255,255,.07); }
+
+/* шапка */
+.head .eyebrow { text-transform: none; letter-spacing: 0; font-size: 13.5px; color: rgba(242,244,247,.6); }
+.head h1 { font-size: clamp(28px, 8.4vw, 33px); line-height: 1.05; }
+.head .sync-dot { width: 7px; height: 7px; box-shadow: none; }
+.hd-back { display: flex; align-items: flex-end; gap: 12px; min-width: 0; }
+.hd-back > .icon-btn { flex-shrink: 0; margin-bottom: 1px; }
+.icon-btn { width: 42px; height: 42px; border-radius: 21px; }
+.icon-btn svg { width: 19px; height: 19px; }
+.icon-btn.lime { box-shadow: none; }
+
+/* єдиний перемикач */
+.useg { display: flex; padding: 3px; border-radius: 15px; background: var(--card); border: 1px solid var(--line); }
+.useg button { flex: 1; min-height: 36px; border-radius: 12px; font-size: 14px; font-weight: 700; color: rgba(242,244,247,.6); transition: background .25s, color .25s; }
+.useg button.on { background: rgba(255,255,255,.14); color: var(--text); }
+
+/* підсумок дня */
+.progress-card { padding: 14px 16px; gap: 16px; border-radius: 24px; }
+.progress-card .ring { width: 64px; height: 64px; }
+.progress-card .ring .val b { font-size: 16px; }
+.progress-card .txt b { font-size: 18px; }
+.progress-card .txt span { font-size: 13.5px; color: rgba(242,244,247,.6); }
+.progress-card.done { border-color: var(--line); }
+
+/* тиждень над звичками */
+.day { background: none; border-color: transparent; padding: 8px 0 9px; border-radius: 15px; }
+.day.sel { background: rgba(255,255,255,.1); border-color: transparent; box-shadow: none; }
+.day .wd { color: rgba(242,244,247,.4); font-weight: 700; }
+.day .mini { width: 16px; height: 3px; }
+.day.future { opacity: .4; }
+
+/* звички */
+.habit { min-height: 62px; padding: 10px 12px 10px 16px; border-radius: 20px; }
+.habit .name { font-size: 16px; }
+.habit .sub { font-size: 13px; color: rgba(242,244,247,.58); }
+.habit .sub:empty { display: none; }
+.habit .sub em { font-style: normal; color: var(--lime); font-weight: 700; }
+.habit .streak { color: rgba(242,244,247,.38); font-size: 12.5px; gap: 2px; }
+.habit .streak svg { width: 12px; height: 12px; }
+.habit.v1, .habit.v2 { border-color: rgba(212,245,122,.18); }
+.habit.v2 { background: rgba(212,245,122,.06); }
+.check { width: 34px; height: 34px; border-radius: 17px; border-width: 2px; border-color: rgba(255,255,255,.22); background: none; }
+.habit.v2 .check { box-shadow: none; }
+.habit .hbar { left: 16px; right: 62px; bottom: 7px; }
+.habit .hbar i { box-shadow: none; }
+.sleepcard { border-radius: 22px; padding: 12px 14px; }
+.sc-ic { width: 36px; height: 36px; border-radius: 12px; background: rgba(255,255,255,.07); }
+.sc-ic svg { stroke: var(--lav); width: 19px; height: 19px; }
+.sc-txt small { color: rgba(242,244,247,.6); }
+.sc-txt b { font-family: var(--sans); font-size: 15px; font-weight: 700; }
+.sc-txt em { color: var(--lav); }
+
+/* план */
+.pstrip { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.pday { min-height: 58px; background: none; border-color: transparent; box-shadow: none; }
+.pday.sel { background: rgba(255,255,255,.1); border-color: transparent; box-shadow: none; }
+.pday.today .dn, .pday.today .wd { color: var(--text); }
+.pday .wd { color: rgba(242,244,247,.4); opacity: 1; font-weight: 700; }
+.pprog { font-size: 13px; color: rgba(242,244,247,.6); }
+.pbar { height: 4px; } .pbar i { box-shadow: none; }
+.tsec-h { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 700; color: rgba(242,244,247,.42); padding: 4px 4px 0; }
+.tsec-h.late { color: rgba(242,244,247,.42); }
+.task { min-height: 58px; border-radius: 18px; }
+.task.glass { box-shadow: none; }
+.task.late:not(.done) { border-color: var(--line); }
+.task.late .tcheck::before { border-color: rgba(255,255,255,.3); }
+.tcheck::before { width: 24px; height: 24px; border-radius: 8px; border-width: 2px; border-color: rgba(255,255,255,.26); background: none; }
+.task.done .tcheck::before { box-shadow: none; }
+.tt { font-size: 15.5px; }
+.ttime { background: none !important; padding: 0 2px; color: rgba(242,244,247,.6); font-size: 13px; }
+.task.now { background: rgba(212,245,122,.06); border-color: rgba(212,245,122,.3); }
+.calfree { padding: 14px 4px; color: rgba(242,244,247,.45); font-size: 14px; font-weight: 600; }
+.calcard { border-radius: 24px; }
+.cal-nav span b { font-family: var(--round); font-size: 16px; color: var(--text); }
+.ccell.has { background: none; border-color: transparent; }
+.ccell.today { background: rgba(212,245,122,.14); border: 0; box-shadow: none; }
+.ccell.sel { outline: 1.5px solid rgba(255,255,255,.5); outline-offset: -1.5px; }
+.view[data-view="plan"] .tlist { display: flex; flex-direction: column; gap: 6px; }
+.nextcard { border-radius: 22px; }
+
+/* щоденник */
+.jcard { border-radius: 20px; }
+.jsrc { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; min-width: 0; }
+.jsrc svg { width: 12px; height: 12px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.jsrc.jp-habit { color: var(--lime); } .jsrc.jp-task { color: var(--lav); }
+.jtime { color: rgba(242,244,247,.38); padding-top: 0; }
+
+/* прогрес */
+.pg-big { border-radius: 24px; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 14px; }
+.pg-n { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pg-n b { font-family: var(--round); font-size: 46px; font-weight: 800; line-height: 1; color: var(--lime); font-variant-numeric: tabular-nums; }
+.pg-n span { font-size: 13.5px; color: rgba(242,244,247,.6); font-weight: 600; }
+.pg-bars { display: flex; align-items: stretch; gap: 8px; height: 104px; }
+.pg-bars.month { gap: 3px; }
+.pg-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pg-tr { flex: 1; display: flex; align-items: flex-end; }
+.pg-tr i { width: 100%; border-radius: 7px; background: rgba(255,255,255,.15); transform-origin: bottom; animation: grow .7s var(--spring) both; animation-delay: calc(var(--i) * 25ms); }
+.pg-bars.month .pg-tr i { border-radius: 3px; }
+.pg-col.today .pg-tr i { background: var(--lime); }
+.pg-col small { text-align: center; font-size: 11px; color: rgba(242,244,247,.4); font-weight: 700; white-space: nowrap; }
+@keyframes grow { from { transform: scaleY(0); } }
+.pg-kp { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pg-kp > div { border-radius: 20px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.pg-kp b { font-family: var(--round); font-size: 21px; font-weight: 800; }
+.pg-kp small { font-size: 12.5px; color: rgba(242,244,247,.58); line-height: 1.3; }
+.hlist { border-radius: 24px; }
+.hlist .top { font-size: 15px; }
+.hlist .top span { color: rgba(242,244,247,.4); }
+.hrow .n { font-size: 14.5px; font-weight: 600; }
+.dots i { width: 9px; height: 9px; border: 0; background: rgba(255,255,255,.12); }
+.dots i.y { background: var(--lime); }
+.hrow .p { color: rgba(242,244,247,.6); }
+.mnav { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+.mnav b { font-family: var(--round); font-size: 17px; font-weight: 800; }
+.mnav .icon-btn { background: none; }
+.grid-card { border-radius: 24px; }
+.cell { border: 0; background: rgba(255,255,255,.09); width: 24px; height: 24px; }
+.cell.v2 { box-shadow: none; }
+.cell.v1 { background: rgba(212,245,122,.4); border: 0; }
+.cell.future { border: 1px dashed rgba(255,255,255,.1); }
+.cell.today { outline: 1.5px solid rgba(255,255,255,.6); outline-offset: 1px; }
+
+/* режим сну */
+.sl-today { border-radius: 24px; padding: 16px; gap: 12px; }
+.sl-big { gap: 12px; }
+.sl-big > span { background: none; padding: 0; }
+.sl-big b { font-size: clamp(32px, 10.5vw, 40px); }
+.sl-small { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.sl-hint { color: var(--lav); }
+.sl-line { display: flex; align-items: center; padding: 4px 4px 0; }
+.sl-line i { width: 12px; height: 12px; border-radius: 6px; background: rgba(255,255,255,.14); flex-shrink: 0; }
+.sl-line i.y { background: var(--lime); }
+.sl-line i.c { background: var(--lime); box-shadow: 0 0 0 4px rgba(212,245,122,.22); }
+.sl-line u { flex: 1; height: 2px; background: rgba(255,255,255,.12); }
+.sl-line u.y { background: var(--lime); }
+.sl-line-l { display: flex; justify-content: space-between; font-size: 11.5px; color: rgba(242,244,247,.4); font-weight: 700; margin-top: -6px; font-variant-numeric: tabular-nums; }
+.sl-note { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: 18px; font-size: 13.5px; color: rgba(242,244,247,.65); }
+.sl-note b { color: var(--text); }
+.sl-note > span { flex: 1; min-width: 0; }
+.sl-note-btn { padding: 9px 13px; border-radius: 15px; background: var(--lime); color: #0B0D10; font-weight: 800; font-size: 13px; white-space: nowrap; }
+.sl-note-x { width: 30px; height: 30px; border-radius: 15px; display: grid; place-items: center; flex-shrink: 0; }
+.sl-note-x svg { width: 14px; height: 14px; fill: none; stroke: rgba(242,244,247,.5); stroke-width: 2.4; stroke-linecap: round; }
+.sl-sec { border-radius: 24px; }
+.sl-list { display: flex; flex-direction: column; }
+.sl-list .sl-row:first-child, .sl-list .sl-idea:first-child { border-top: 0; }
+
+/* рядки-посилання в групах */
+.set-group { border-radius: 20px; background: var(--card); border-color: var(--line); }
+.set-row { min-height: 52px; padding: 12px 14px; }
+.set-row + .set-row, .set-group > * + .set-row { border-top: 1px solid var(--line); }
+.set-row.link { width: 100%; text-align: left; }
+.set-row.link > svg { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: rgba(242,244,247,.35); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; margin-left: -4px; }
+.set-row .v { margin-left: auto; color: rgba(242,244,247,.55); font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.set-row .l b { display: flex; align-items: center; gap: 9px; }
+.set-row .l b svg { width: 17px; height: 17px; fill: none; stroke: rgba(242,244,247,.55); stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.set-row .l b .impdot { margin-right: 0; }
+.gh { font-size: 13px; font-weight: 700; color: rgba(242,244,247,.42); margin: 4px 4px -8px; }
+.sheet { background: rgba(23,24,29,.92); }
+.sheet .sbody { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.sheet .sbody .note-input { min-height: 64px; }
+.opts .trow { flex-wrap: wrap; }
+.opts .trow .timerow { justify-content: flex-end; flex: 1; }
+.opts .warn:empty { display: none; }
+.opts .warn { padding: 0 14px 8px; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper button { width: 34px; height: 34px; border-radius: 17px; background: rgba(255,255,255,.09); font-size: 18px; font-weight: 800; }
+.stepper b { min-width: 22px; text-align: center; font-family: var(--round); font-size: 18px; }
+[data-pw-row].off { opacity: .35; pointer-events: none; }
+.big-input.small { min-height: 48px; font-size: 16px; font-weight: 500; }
+.sheet .chip { min-height: 38px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; }
+.sheet .chip svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.tabbar { background: rgba(26,28,34,.62); border-color: rgba(255,255,255,.1); }
+@media (max-width: 767px) { .tab { font-size: 11px; } }
+@media (max-width: 359px) { .tab { font-size: 10px; } }
+@media (max-width: 767px) { .view[data-view="plan"] { padding-bottom: calc(var(--safe-bottom) + 200px); } }

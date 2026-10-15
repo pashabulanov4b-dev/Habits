@@ -31,6 +31,7 @@ const S = {
   selDate: todayKey(),
   monthOffset: 0,
   period: 'week',
+  progMode: 'week', // прогрес: week | month | table
   sync: { state: 'idle', pending: 0, lastSync: null },
   installPrompt: null,
   // планувальник
@@ -240,7 +241,7 @@ const I = {
 
 /* ================= Навігація ================= */
 const views = document.getElementById('views');
-const TABS = ['today', 'plan', 'journal', 'table', 'stats'];
+const TABS = ['today', 'plan', 'journal', 'progress'];
 
 function showTab(tab, { animate = true } = {}) {
   S.tab = tab;
@@ -275,8 +276,7 @@ function renderView(el = currentView()) {
   if (el.dataset.view === 'plan') renderPlan(el);
   if (el.dataset.view === 'journal') renderJournal(el);
   if (el.dataset.view === 'sleep') renderSleep(el);
-  if (el.dataset.view === 'table') renderTable(el);
-  if (el.dataset.view === 'stats') renderStats(el);
+  if (el.dataset.view === 'progress') renderProgress(el);
 }
 // Тихе оновлення: без каскадної анімації появи (після відмітки, синхронізації)
 function rerender() {
@@ -287,6 +287,20 @@ function rerender() {
   el.classList.add('static');
   renderView(el);
   el.scrollTop = top;
+}
+
+/* ================= Спільні частини: шапка й перемикач ================= */
+// Одна шапка для всіх екранів: дрібний підпис, великий заголовок зліва, кнопки справа
+function headHTML({ eyebrow, title, actions = '', back = '', dot = true }) {
+  return `<div class="head">
+    <div class="${back ? 'hd-back' : ''}">${back}<div><div class="eyebrow">${dot ? `<span class="${syncDotClass()}" data-sync-dot></span>` : ''}${esc(eyebrow)}</div><h1>${esc(title)}</h1></div></div>
+    ${actions ? `<div class="head-actions">${actions}</div>` : ''}
+  </div>`;
+}
+// Один перемикач для всього застосунку
+function segHTML(items, current, act, label) {
+  return `<div class="useg" role="tablist" aria-label="${esc(label)}">${items.map(([k, l]) =>
+    `<button role="tab" data-act="${act}" data-v="${k}" class="${k === current ? 'on' : ''}" aria-selected="${k === current}">${l}</button>`).join('')}</div>`;
 }
 
 /* ================= Екран «Сьогодні» ================= */
@@ -311,17 +325,16 @@ function todaySummary() {
   const counted = hs.filter((h) => val(h.id, date) > 0).length;
   const full = hs.filter((h) => val(h.id, date) === 2).length;
   let frac = dayScore(date) ?? 0;
-  let head = `${counted} з ${hs.length} звичок зараховано`;
-  let sub = 'Поганий день? Зроби мінімум — ланцюжок не порветься.';
-  if (hs.length && full === hs.length) { head = 'Ідеальний день!'; sub = 'Усе виконано повністю. Так тримати.'; }
-  else if (hs.length && counted === hs.length) { head = 'День зараховано'; sub = 'Ланцюжок цілий — навіть мінімум рахується.'; }
+  const left = hs.length - counted;
+  let head = `${counted} з ${hs.length} ${plural(hs.length, 'звички', 'звичок', 'звичок')}`;
+  let sub = left ? `Ще ${left} — і день зараховано` : '';
+  if (hs.length && full === hs.length) { head = 'Ідеальний день'; sub = 'Усе виконано. Так тримати'; }
+  else if (hs.length && counted === hs.length) { head = 'День зараховано'; sub = 'Ланцюжок цілий'; }
   if (!hs.length && weekly.length) {
     // лише тижневі звички: кільце показує прогрес тижня
     frac = weekly.reduce((s, h) => s + Math.min(1, weekDone(h, ws) / (weekNeed(h, ws) || 1)), 0) / weekly.length;
-    head = `Тиждень: ${weeklyMet} з ${weekly.length} цілей`;
-    sub = 'Тижневі звички роби в будь-які дні — головне встигнути до неділі.';
-  } else if (weekly.length) {
-    sub += ` Тижневі цілі: ${weeklyMet}/${weekly.length}.`;
+    head = `Тиждень: ${weeklyMet} з ${weekly.length}`;
+    sub = 'Тижневі звички — у будь-які дні';
   }
   return { frac, head, sub, counted, total: hs.length, any: hs.length + weekly.length };
 }
@@ -339,17 +352,20 @@ function habitSub(h, v, date = S.selDate) {
   const n = noteOf(h.id, date);
   if (n) return `<span class="hn">${INOTE}${esc(n)}</span>`;
   if (h.sleep) { const s = sleepSub(h, v, date); if (s) return s; }
+  if (!isCount(h) && !isDaily(h)) {
+    const ws = weekStart(date), done = weekDone(h, ws), need = weekNeed(h, ws);
+    return done >= need ? `<em>${done} з ${need}</em> цього тижня ✓` : `${done} з ${need} цього тижня`;
+  }
   if (isCount(h)) {
     const a = amt(h.id, date);
     const u = h.unit ? ' ' + esc(h.unit) : '';
     if (a != null && a > 0) {
       const left = h.target - a;
-      return `<b class="amt">${fmtNum(a)}</b> / ${fmtNum(h.target)}${u}` + (left > 0 ? ` · ще ${fmtNum(left)}` : ' · ціль ✓');
+      return `<em>${fmtNum(a)}</em> / ${fmtNum(h.target)}${u}`;
     }
-    return `Ціль: ${fmtNum(h.target)}${u} · мін. ${fmtNum(minOf(h))}`;
+    return `0 / ${fmtNum(h.target)}${u}`;
   }
-  if (v === 1) return 'Мінімум: ' + esc(h.min || '—');
-  return h.full ? 'Мета: ' + esc(h.full) : 'Тап — відмітити';
+  return '';
 }
 
 // Кружок справа: галочка / МІН / число (19) для часткового виконання
@@ -391,38 +407,33 @@ function renderToday(el) {
     ? `<div class="habits stagger">${hs.map((h, i) => {
         const v = val(h.id, date);
         return `<button class="${rowClass(h, v)}" data-act="habit" data-id="${h.id}" style="--i:${i}" aria-label="${esc(h.name)}">
-          <span class="meta"><span class="name">${esc(h.name)}${weekLine(h)}</span><span class="sub">${habitSub(h, v)}</span></span>
+          <span class="meta"><span class="name">${esc(h.name)}</span><span class="sub">${habitSub(h, v)}</span></span>
           ${h.askNote ? `<span class="hnote${noteOf(h.id, date) ? ' has' : ''}" role="button" tabindex="0" data-act="habit-note" data-id="${h.id}" aria-label="Нотатка за день">${INOTE}</span>` : ''}
-          <span class="streak">${I.flame}<span>${streakLabel(h)}</span></span>
+          <span class="streak">${I.flame}<span>${streakOf(h)}</span></span>
           <span class="check">${checkInner(h, v)}</span>
           ${isCount(h) ? `<span class="hbar"><i style="width:${barWidth(h)}%"></i></span>` : ''}</button>`;
       }).join('')}</div>
-      <div class="hint">Тап — відмітити (у звичках з кількістю — ввести, скільки зроблено).<br>Утримуй звичку, щоб змінити або видалити.</div>`
+`
     : S.habits.length
       ? `<div class="empty glass"><p>Цього дня звичок ще не було.</p></div>`
       : `<div class="empty glass">
           <h2>Почнімо з однієї звички</h2>
-          <p>Відмічай щодня. Для звичок з кількістю можна задати ще й мінімум — на дні, коли зовсім немає сил.</p>
+          <p>Додай першу звичку або візьми одну з готових.</p>
           <div class="chips">${TEMPLATES.map((tp, i) => `<button class="chip glass press" data-act="template" data-i="${i}">${esc(tp.name)}</button>`).join('')}</div>
           <button class="btn primary press" data-act="add">${I.plus.replace('<svg', '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"')}Своя звичка</button>
         </div>`;
 
   el.innerHTML = `
-    <div class="head">
-      <div><div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>${esc(fmtLong.format(parseKey(date)))}</div><h1>${title}</h1></div>
-      <div class="head-actions">
-        <button class="icon-btn glass press" data-act="settings" aria-label="Налаштування">${I.gear}</button>
-        <button class="icon-btn glass press" data-act="add" aria-label="Додати звичку">${I.plus}</button>
-      </div>
-    </div>
+    ${headHTML({ eyebrow: cap(fmtLong.format(parseKey(date))), title,
+      actions: `<button class="icon-btn glass press" data-act="settings" aria-label="Налаштування">${I.gear}</button><button class="icon-btn lime press" data-act="add" aria-label="Додати звичку">${I.plus}</button>` })}
     ${install}
     <div class="cols">
     <div class="col sticky">
     <div class="week">${week.join('')}</div>
     <div class="progress-card glass${sum.total && sum.counted === sum.total ? ' done' : ''}" data-progress>
       <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-ring/></svg>
-        <div class="val"><div><b data-pct>0%</b><small>дня</small></div></div></div>
-      <div class="txt"><b data-headline>${sum.any ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.any ? sum.sub : 'Додай першу — і відмічай щодня.'}</span></div>
+        <div class="val"><div><b data-pct>0%</b></div></div></div>
+      <div class="txt"><b data-headline>${sum.any ? sum.head : 'Ще немає звичок'}</b><span data-sub>${sum.any ? sum.sub : 'Додай першу — і відмічай щодня'}</span></div>
     </div>
     ${sleepCardHTML()}
     </div>
@@ -491,20 +502,21 @@ function monthInfo() {
 }
 function earliestStart() { return S.habits.reduce((m, h) => (h.start < m ? h.start : m), S.today); }
 
-function tableKpis(mi) {
-  let counted = 0, eligible = 0, sum = 0, mins = 0;
+function tableStats(mi) {
+  let counted = 0, eligible = 0, sum = 0;
   mi.keys.forEach((d) => {
     if (d > S.today) return;
     const sc = dayScore(d);
     if (sc === null) return;
     eligible++; sum += sc;
     if (dayCounted(d)) counted++;
-    activeOn(d).forEach((h) => { if (val(h.id, d) === 1) mins++; });
   });
-  return `
-    <div class="kpi glass"><b class="lime">${counted}/${eligible}</b><span>днів усе зараховано</span></div>
-    <div class="kpi glass"><b>${eligible ? Math.round(sum / eligible * 100) : 0}%</b><span>середній день</span></div>
-    <div class="kpi glass"><b>${mins}</b><span>разів «мінімум»</span></div>`;
+  return { counted, eligible, avg: eligible ? Math.round(sum / eligible * 100) : 0 };
+}
+function tableKpis(mi) {
+  const t = tableStats(mi);
+  return `<div class="glass"><b>${t.avg}%</b><small>середній день</small></div>
+    <div class="glass"><b>${t.counted} ${plural(t.counted, 'день', 'дні', 'днів')}</b><small>усе виконано</small></div>`;
 }
 function rowScore(h, mi) {
   let any = 0, el = 0;
@@ -535,18 +547,19 @@ function renderTable(el) {
   }).join('');
 
   el.innerHTML = `
-    <div class="month-head">
-      <button class="icon-btn glass press" data-act="month" data-d="-1" aria-label="Попередній місяць" ${prevDisabled ? 'disabled' : ''}>${I.left}</button>
-      <div class="mid"><div class="eyebrow">Таблиця звичок</div><h1>${esc(fmtMonth.format(mi.first).replace(' р.', ''))}</h1></div>
-      <button class="icon-btn glass press" data-act="month" data-d="1" aria-label="Наступний місяць" ${S.monthOffset >= 0 ? 'disabled' : ''}>${I.right}</button>
+    ${headHTML({ eyebrow: `Середній день — ${tableStats(mi).avg}%`, title: 'Прогрес' })}
+    ${progSeg()}
+    <div class="mnav">
+      <button class="icon-btn small press" data-act="month" data-d="-1" aria-label="Попередній місяць" ${prevDisabled ? 'disabled' : ''}>${I.left}</button>
+      <b>${esc(cap(fmtMonth.format(mi.first).replace(' р.', '')))}</b>
+      <button class="icon-btn small press" data-act="month" data-d="1" aria-label="Наступний місяць" ${S.monthOffset >= 0 ? 'disabled' : ''}>${I.right}</button>
     </div>
-    <div class="kpis stagger" data-kpis>${tableKpis(mi)}</div>
     ${hs.length ? `
     <div class="grid-card glass">
       <div class="grid-names">
         <div style="height:34px"></div>
-        ${hs.map((h) => `<div class="nm"><b>${esc(h.name)}</b><span data-rs="${h.id}">${rowScore(h, mi)}</span></div>`).join('')}
-        <div class="grid-labels">День, %</div>
+        ${hs.map((h) => `<div class="nm"><b>${esc(h.name)}</b></div>`).join('')}
+        <div class="grid-labels">День</div>
       </div>
       <div class="grid-scroll" data-gscroll>
         <div class="grid-cols">
@@ -556,8 +569,7 @@ function renderTable(el) {
         </div>
       </div>
     </div>
-    <div class="legend"><span><i class="l2"></i>Повністю</span><span><i class="l1"></i>Мінімум</span><span><i class="l0"></i>Пропуск</span></div>
-    <div class="hint">Свайпни таблицю вбік. Тап по клітинці змінює відмітку заднім числом.</div>`
+    <div class="pg-kp" data-kpis>${tableKpis(mi)}</div>`
     : `<div class="empty glass"><p>Цього місяця звичок ще не було.</p></div>`}`;
 
   const sc = el.querySelector('[data-gscroll]');
@@ -567,7 +579,12 @@ function renderTable(el) {
   }
 }
 
-/* ================= Екран «Статистика» ================= */
+/* ================= Екран «Прогрес» = статистика + таблиця ================= */
+const progSeg = () => segHTML([['week', 'Тиждень'], ['month', 'Місяць'], ['table', 'Таблиця']], S.progMode, 'prog', 'Прогрес');
+function renderProgress(el) {
+  if (S.progMode === 'table') renderTable(el);
+  else { S.period = S.progMode; renderStats(el); }
+}
 function periodDays(period, endKey) {
   const n = period === 'week' ? 7 : parseKey(endKey).getDate();
   const out = [];
@@ -596,18 +613,12 @@ function renderStats(el) {
   let best = { n: 0, name: '', weeks: false };
   const pool = S.habits.some(isDaily) ? S.habits.filter(isDaily) : S.habits;
   pool.forEach((h) => { const n = longestOf(h); if (n > best.n) best = { n, name: h.name, weeks: !isDaily(h) }; });
-  let saved = 0;
-  days.forEach((d) => activeOn(d).forEach((h) => { if (val(h.id, d) === 1) saved++; }));
-
+  const scored = days.filter((d) => d <= S.today && dayScore(d) !== null);
+  const fullDays = scored.filter((d) => dayCounted(d)).length;
   const bars = days.map((d, i) => {
-    const hs = dailyOn(d);
-    const f = hs.filter((h) => val(h.id, d) === 2).length;
-    const m = hs.filter((h) => val(h.id, d) === 1).length;
-    const n = hs.length || 1;
+    const sc = d <= S.today ? dayScore(d) || 0 : 0;
     const label = S.period === 'week' ? WD_SHORT[parseKey(d).getDay()] : (i % 5 === 0 || d === S.today ? String(parseKey(d).getDate()) : '');
-    return `<div class="bcol${d === S.today ? ' today' : ''}"><div class="btrack">
-      <i class="m" style="--i:${i};height:${Math.round(m / n * 88)}px"></i><i class="f" style="--i:${i};height:${Math.round(f / n * 88)}px"></i>
-      </div><small>${label || '&nbsp;'}</small></div>`;
+    return `<div class="pg-col${d === S.today ? ' today' : ''}"><div class="pg-tr"><i style="--i:${i};height:${Math.max(4, Math.round(sc * 100))}%"></i></div><small>${label || '&nbsp;'}</small></div>`;
   }).join('');
 
   const last7 = periodDays('week', S.today);
@@ -617,7 +628,7 @@ function renderStats(el) {
     // для тижневих звичок очікується perWeek разів на кожні 7 днів
     const expected = isDaily(h) ? eligible : Math.max(1, Math.round(perWeek(h) * eligible / 7));
     const pct = eligible ? Math.min(100, Math.round(any / expected * 100)) : 0;
-    const dots = last7.map((d) => `<i class="${d < h.start ? 'na' : 'v' + val(h.id, d)}"></i>`).join('');
+    const dots = last7.map((d) => `<i class="${d < h.start ? 'na' : val(h.id, d) > 0 ? 'y' : ''}"></i>`).join('');
     const tag = isDaily(h) ? '' : `<small class="fq">${perWeek(h)}×/тиж</small>`;
     return `<div class="hrow"><span class="n">${esc(h.name)}${tag}</span><span class="dots">${dots}</span><span class="p">${pct}%</span></div>`;
   }).join('');
@@ -627,26 +638,17 @@ function renderStats(el) {
     : cap(fmtMonth.format(parseKey(S.today)).replace(' р.', ''));
 
   el.innerHTML = `
-    <div class="head stack">
-      <div><div class="eyebrow">${esc(range)}</div><h1>Статистика</h1></div>
-      <div class="seg glass" role="tablist" aria-label="Період">
-        <div class="knob"></div>
-        <button role="tab" data-act="period" data-p="week" class="${S.period === 'week' ? 'on' : ''}" aria-selected="${S.period === 'week'}">Тиждень</button>
-        <button role="tab" data-act="period" data-p="month" class="${S.period === 'month' ? 'on' : ''}" aria-selected="${S.period === 'month'}">Місяць</button>
-      </div>
-    </div>
+    ${headHTML({ eyebrow: range, title: 'Прогрес' })}
+    ${progSeg()}
     <div class="cols">
     <div class="col stagger">
-      <div class="hero glass" style="--i:0">
-        <div class="big"><span>Виконання за період</span><b data-total>0%</b><em>${esc(delta)}</em></div>
-        <div class="side">
-          <div class="mini-card"><b>${best.n} ${best.weeks ? plural(best.n, 'тиждень', 'тижні', 'тижнів') : plural(best.n, 'день', 'дні', 'днів')}</b><span>${best.n ? 'рекорд: ' + esc(best.name) : 'найдовший ланцюжок'}</span></div>
-          <div class="mini-card"><b>${saved} ${plural(saved, 'раз', 'рази', 'разів')}</b><span>врятовано мінімумом</span></div>
-        </div>
+      <div class="pg-big glass" style="--i:0">
+        <div class="pg-n"><b data-total>0%</b><span>виконано · ${esc(delta)}</span></div>
+        <div class="pg-bars${S.period === 'month' ? ' month' : ''}">${bars}</div>
       </div>
-      <div class="chart glass" style="--i:1">
-        <div class="chart-top"><b>По днях</b><div class="legend" style="padding:0;font-size:11px;gap:10px"><span><i class="l2"></i>Повністю</span><span><i class="l1"></i>Мінімум</span></div></div>
-        <div class="bars">${bars}</div>
+      <div class="pg-kp" style="--i:1">
+        <div class="glass"><b>${best.n} ${best.weeks ? plural(best.n, 'тиждень', 'тижні', 'тижнів') : plural(best.n, 'день', 'дні', 'днів')}</b><small>${best.n ? 'найдовший ланцюжок · ' + esc(best.name) : 'найдовший ланцюжок'}</small></div>
+        <div class="glass"><b>${fullDays} з ${scored.length}</b><small>днів повністю зараховано</small></div>
       </div>
     </div>
     <div class="col stagger">
@@ -655,7 +657,6 @@ function renderStats(el) {
     </div>`;
 
   requestAnimationFrame(() => {
-    placeKnob(el);
     countTo(el.querySelector('[data-total]'), Math.round((cur || 0) * 100), '%');
   });
 }
@@ -713,24 +714,14 @@ function closeSheet(instant = false) {
 }
 
 function openHabitSheet(h = null) {
-  const v = h || { name: '', full: '', min: '', kind: 'count', target: '', minAmount: '', unit: '' };
+  const v = h || { name: '', full: '', min: '', kind: 'check', target: '', minAmount: '', unit: '' };
   let kind = isCount(v) || (!h && v.kind === 'count') ? 'count' : 'check';
   openSheet(`
     <h2>${h ? 'Редагувати звичку' : 'Нова звичка'}</h2>
-    <div class="field"><label for="f-name">Назва</label><input id="f-name" maxlength="40" placeholder="Напр. Читання" value="${esc(v.name)}" autocomplete="off"></div>
-    <div class="field"><label>Як відмічати</label>
-      <div class="seg glass" role="tablist" data-kind-seg>
-        <div class="knob"></div>
-        <button type="button" role="tab" data-kind="count">Кількість</button>
-        <button type="button" role="tab" data-kind="check">Так / ні</button>
-      </div>
-      <small data-kind-hint></small>
-    </div>
-    <div class="field"><label>Як часто</label>
-      <div class="freq" role="radiogroup" aria-label="Як часто" data-freq>
-        ${[7, 1, 2, 3, 4, 5, 6].map((n) => `<button type="button" role="radio" class="glass press" data-pw="${n}">${n === 7 ? 'Щодня' : n + '×'}</button>`).join('')}
-      </div>
-      <small data-freq-hint></small>
+    <input id="f-name" class="big-input" maxlength="40" placeholder="Назва, напр. Спорт" value="${esc(v.name)}" autocomplete="off" aria-label="Назва">
+    <div class="useg" role="tablist" data-kind-seg>
+      <button type="button" role="tab" data-kind="check">Так / ні</button>
+      <button type="button" role="tab" data-kind="count">Кількість</button>
     </div>
     <div data-kind-count>
       <div class="field-row">
@@ -741,12 +732,18 @@ function openHabitSheet(h = null) {
         <small>Мінімум — настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
     </div>
     <div data-kind-check>
-      <div class="field"><label for="f-full">Повна мета</label><input id="f-full" maxlength="40" placeholder="Напр. лягти до 23:00" value="${esc(isCount(v) ? '' : v.full)}" autocomplete="off"></div>
+      <input id="f-full" class="big-input small" maxlength="40" placeholder="Мета (необовʼязково)" value="${esc(isCount(v) ? '' : v.full)}" autocomplete="off" aria-label="Мета">
     </div>
-    <div class="field"><label for="f-note">${INOTE}Нотатка до звички <span class="opt">необовʼязково</span></label>
-      <textarea id="f-note" class="note-input" rows="2" maxlength="300" placeholder="Навіщо мені це, як роблю, що допомагає…">${esc(v.note || '')}</textarea></div>
+    <div class="gh">Як часто</div>
     <div class="set-group">
-      <div class="set-row"><div class="l"><b>Нотатка при відмітці</b><span>Після відмітки зʼявиться віконце «Як пройшло?»</span></div>
+      <div class="set-row"><div class="l"><b>Щодня</b></div><button type="button" class="switch" role="switch" data-daily aria-label="Щодня"></button></div>
+      <div class="set-row" data-pw-row><div class="l"><b>Разів на тиждень</b><span>у будь-які дні</span></div>
+        <div class="stepper"><button type="button" data-pw-d="-1" aria-label="Менше">−</button><b data-pw-v></b><button type="button" data-pw-d="1" aria-label="Більше">+</button></div></div>
+    </div>
+    <div class="set-group">
+      <button type="button" class="set-row link" data-open-note><div class="l"><b>Нотатка до звички</b></div><span class="v">${v.note ? '' : 'Додати'}</span>${I.right}</button>
+      <div class="sbody" data-note-body ${v.note ? '' : 'hidden'}><textarea id="f-note" class="note-input" rows="2" maxlength="300" placeholder="Навіщо мені це, як роблю, що допомагає…">${esc(v.note || '')}</textarea></div>
+      <div class="set-row"><div class="l"><b>Спитати «Як пройшло?»</b></div>
         <button type="button" class="switch" role="switch" aria-checked="${!!v.askNote}" aria-label="Питати нотатку при відмітці" data-asknote></button></div>
     </div>
     ${h ? recentNotesHTML(h) : ''}
@@ -762,22 +759,25 @@ function openHabitSheet(h = null) {
       seg.querySelectorAll('button').forEach((b) => { const on = b.dataset.kind === kind; b.classList.toggle('on', on); b.setAttribute('aria-selected', on); });
       sheet.querySelector('[data-kind-count]').hidden = kind !== 'count';
       sheet.querySelector('[data-kind-check]').hidden = kind !== 'check';
-      sheet.querySelector('[data-kind-hint]').textContent = kind === 'count'
-        ? 'Вводиш, скільки зробив: 19 з 20 сторінок зарахується майже як повний день.'
-        : 'Просто відмічаєш: зроблено або ні.';
-      placeKnob(sheet);
     };
+    sheet.querySelector('[data-open-note]').addEventListener('click', (e) => {
+      const b = sheet.querySelector('[data-note-body]'); b.hidden = !b.hidden;
+      if (!b.hidden) { e.currentTarget.querySelector('.v').textContent = ''; sheet.querySelector('#f-note').focus(); }
+    });
     seg.addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { kind = b.dataset.kind; applyKind(); } });
     requestAnimationFrame(applyKind);
     let pw = h ? perWeek(h) : 7;
-    const freq = sheet.querySelector('[data-freq]');
+    let weekly = pw < 7 ? pw : 3;
+    const daily = sheet.querySelector('[data-daily]');
     const applyFreq = () => {
-      freq.querySelectorAll('[data-pw]').forEach((b) => { const on = Number(b.dataset.pw) === pw; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
-      sheet.querySelector('[data-freq-hint]').textContent = pw === 7
-        ? 'Щодня — рахується в щоденний відсоток і ланцюжок днів.'
-        : `${pw} ${plural(pw, 'раз', 'рази', 'разів')} на тиждень, у будь-які дні. Інші дні не рахуються пропуском, а ланцюжок рахується в тижнях.`;
+      daily.setAttribute('aria-checked', String(pw === 7));
+      sheet.querySelector('[data-pw-row]').classList.toggle('off', pw === 7);
+      sheet.querySelector('[data-pw-v]').textContent = weekly;
     };
-    freq.addEventListener('click', (e) => { const b = e.target.closest('[data-pw]'); if (b) { pw = Number(b.dataset.pw); applyFreq(); } });
+    daily.addEventListener('click', () => { pw = pw === 7 ? weekly : 7; applyFreq(); });
+    sheet.querySelectorAll('[data-pw-d]').forEach((b) => b.addEventListener('click', () => {
+      weekly = Math.min(6, Math.max(1, weekly + Number(b.dataset.pwD))); pw = weekly; applyFreq();
+    }));
     applyFreq();
     if (!h) setTimeout(() => name.focus(), 350);
     const bad = (el) => { el.focus(); el.style.borderColor = '#FF8A80'; };
@@ -987,32 +987,29 @@ async function openSettings() {
   const needInstall = isIOS() && !isStandalone();
   openSheet(`
     <h2>Налаштування</h2>
+    <div class="gh">Нагадування</div>
     <div class="set-group">
-      <div class="set-row"><div class="l"><b>Нагадування про звички</b><span>${needInstall ? 'Спершу встанови застосунок на початковий екран' : 'Якщо до цього часу не все відмічено'}</span></div>
+      <div class="set-row"><div class="l"><b>Про звички</b><span>${needInstall ? 'Спершу встанови застосунок на початковий екран' : 'Якщо до цього часу не все відмічено'}</span></div>
         <button class="switch" role="switch" aria-checked="${ns.enabled && ns.daily}" aria-label="Нагадування про звички" data-notify></button></div>
       <div class="set-row"><div class="l"><b>Час</b></div><input type="time" value="${esc(ns.time)}" data-time aria-label="Час нагадування"></div>
+      <button class="set-row link" data-sleep-entry><div class="l"><b>Режим сну</b><span>${S.sleepCfg && S.sleepCfg.active ? 'Програма йде · тиждень ' + ((stageOn(S.sleepCfg, S.today) || { week: -1 }).week + 1) : '4 тижні, щоб засинати й вставати раніше'}</span></div>${I.right}</button>
     </div>
+    <div class="gh">Дані</div>
     <div class="set-group">
-      <div class="set-row"><div class="l"><b>Режим сну</b><span>${S.sleepCfg && S.sleepCfg.active ? 'Програма йде · тиждень ' + ((stageOn(S.sleepCfg, S.today) || { week: -1 }).week + 1) : '4 тижні, щоб засинати й вставати раніше'}</span></div>
-        <button class="small-btn press" data-sleep-entry>${S.sleepCfg && S.sleepCfg.active ? 'Відкрити' : 'Налаштувати'}</button></div>
-    </div>
-    <div class="set-group">
-      <div class="set-row"><div class="l"><b>Що вміє застосунок</b><span>Коротка презентація всіх можливостей</span></div>
-        <button class="small-btn press" data-intro>Показати</button></div>
-    </div>
-    <div class="set-group">
-      <div class="set-row"><div class="l"><b>Резервна копія</b><span>${lastBackup ? 'Остання: ' + esc(fmtShortDM.format(new Date(lastBackup))) : 'Ще не робив'} · звички, план, щоденник, сон — в один файл</span></div>
+      <div class="set-row"><div class="l"><b>Резервна копія</b><span>${lastBackup ? 'Остання — ' + esc(fmtDayMonth.format(new Date(lastBackup))) : 'Ще не робив'}</span></div>
         <button class="small-btn press" data-backup>Зберегти</button></div>
       <div class="set-row"><div class="l"><b>Відновити з файлу</b><span>Записи з файлу замінять ті самі записи тут</span></div>
         <label class="small-btn press" style="display:inline-flex;align-items:center">Вибрати<input type="file" accept="application/json,.json" data-restore hidden></label></div>
-    </div>
-    <div class="set-group">
       <div class="set-row"><div class="l"><b>Синхронізація</b><span data-sync-text>${esc(syncText())}</span></div>
         <button class="small-btn press" data-sync-now>Зараз</button></div>
       <div class="set-row"><div class="l"><b>Код синхронізації</b><span class="code">${esc(uid)}</span></div>
         <button class="small-btn press" data-copy>Копіювати</button></div>
-      <div class="set-row"><div class="l" style="flex:1"><b>Підключити інший пристрій</b><span>Встав код з іншого телефона, щоб бачити ті самі звички</span></div></div>
+      <div class="set-row"><div class="l" style="flex:1"><b>Підключити інший пристрій</b><span>Встав код з іншого телефона</span></div></div>
       <div class="set-row" style="padding-top:0"><input class="code-in" data-code placeholder="u-…" style="flex:1;min-width:0;min-height:40px;padding:0 12px;border-radius:12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);font-size:16px" autocomplete="off" autocapitalize="off"><button class="small-btn press" data-adopt>Підключити</button></div>
+    </div>
+    <div class="gh">Про застосунок</div>
+    <div class="set-group">
+      <button class="set-row link" data-intro><div class="l"><b>Що вміє застосунок</b><span>Коротка презентація</span></div>${I.right}</button>
     </div>
     <button class="btn block press glass" data-close>Готово</button>
   `, (sheet) => {
@@ -1245,14 +1242,7 @@ async function patchTask(id, patch) {
 }
 
 function planHead(eyebrow, title) {
-  const m = S.planMode;
-  const b = (k, label, extra = '') => `<button role="tab" data-act="plan-mode" data-m="${k}" class="${m === k ? 'on' : ''}" aria-selected="${m === k}" ${extra}>${label}</button>`;
-  return `<div class="plan-top">
-    <div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>${esc(eyebrow)}</div>
-    <div class="head plan-head"><h1>${esc(title)}</h1>
-      <div class="pseg glass" role="tablist" aria-label="Вигляд плану">${b('day', 'День')}${b('ahead', 'Наперед')}${b('cal', ICAL, 'aria-label="Календар"')}</div>
-    </div>
-  </div>`;
+  return headHTML({ eyebrow: cap(eyebrow), title }) + segHTML([['day', 'День'], ['ahead', 'Наперед'], ['cal', 'Календар']], S.planMode, 'plan-mode', 'Вигляд плану');
 }
 
 // нотатка під назвою: після виконання — «як пройшло», інакше — опис завдання
@@ -1262,10 +1252,10 @@ function noteLine(t, compact) {
   return `<span class="tn${t.done && t.doneNote ? ' res' : ''}${compact ? ' compact' : ''}">${INOTE}${esc(txt)}</span>`;
 }
 function taskRow(t, i, { carried = false, compact = false } = {}) {
-  const meta = carried ? 'Перенесено ' + (t.date === addDays(S.today, -1) ? 'з учора' : 'з ' + fmtShortDM.format(parseKey(t.date))) : '';
+  const meta = carried && t.date !== addDays(S.today, -1) ? 'з ' + fmtShortDM.format(parseKey(t.date)) : '';
   const now = isNow(t);
   const rem = remindAtOf(t);
-  const sub = meta || (now ? 'Зараз · до ' + t.endTime : '') || (!compact && rem && !t.done ? 'Нагадаю о ' + rem : '');
+  const sub = meta || (now ? 'Зараз · до ' + t.endTime : '');
   return `<div class="task${compact ? ' compact' : ' glass'}${t.important ? ' imp' : ''}${t.done ? ' done' : ''}${carried ? ' late' : ''}${now ? ' now' : ''}" data-task="${t.id}" style="--i:${i}">
     <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
     <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
@@ -1273,7 +1263,7 @@ function taskRow(t, i, { carried = false, compact = false } = {}) {
       ${noteLine(t, compact)}
     </button>
     ${t.askNote ? `<button class="tnote${t.doneNote ? ' has' : ''}" data-act="task-note" data-id="${t.id}" aria-label="Нотатка: ${esc(t.title)}">${INOTE}</button>` : ''}
-    ${t.time || rem ? `<span class="ttime${t.endTime ? ' range' : ''}">${rem ? IBELL : ''}${timeRange(t)}</span>` : ''}
+    ${t.time || rem ? `<span class="ttime${t.endTime && !now ? ' range' : ''}">${rem && !t.done ? IBELL : ''}${now ? t.time : timeRange(t) || rem}</span>` : ''}
   </div>`;
 }
 
@@ -1302,22 +1292,22 @@ function renderPlanDay(el) {
   const done = list.filter((t) => t.done).length;
   let i = 0;
   const section = (title, items, opts = {}) => (items.length
-    ? `<div class="tsec"><div class="tsec-h${opts.carried ? ' late' : ''}">${title}</div>${items.map((t) => taskRow(t, i++, opts)).join('')}</div>` : '');
+    ? `<div class="tsec">${title ? `<div class="tsec-h">${title}</div>` : ''}${items.map((t) => taskRow(t, i++, opts)).join('')}</div>` : '');
 
+  const lateLabel = carried.every((t) => t.date === addDays(S.today, -1)) ? 'З учора' : 'Не зроблено раніше';
   el.innerHTML = `
     ${planHead(fmtLong.format(parseKey(date)), relDay(date))}
     <div class="cols">
     <div class="col">
-    <div class="pstrip">${strip.join('')}<button class="pday cal" data-act="plan-mode" data-m="cal" aria-label="Відкрити календар">${ICAL}</button></div>
-    ${total ? `<div class="pprog"><span>Виконано ${done} з ${total}</span><div class="pbar"><i style="width:${Math.round(done / total * 100)}%"></i></div></div>` : ''}
+    <div class="pstrip">${strip.join('')}</div>
+    ${total ? `<div class="pprog"><span>${done} з ${total} зроблено</span><div class="pbar"><i style="width:${Math.round(done / total * 100)}%"></i></div></div>` : ''}
     <div class="stagger tlist">
-      ${section('Перенесено', carried, { carried: true })}
-      ${section('За часом', timed)}
-      ${section('Будь-коли', any)}
+      ${section(lateLabel, carried, { carried: true })}
+      ${section(carried.length ? relDay(date) : '', timed.concat(any))}
     </div>
     ${total ? '' : `<div class="empty glass">${ISUN}<h2>${date < S.today ? 'Нічого не було' : 'Вільний день'}</h2><p>${date < S.today ? 'На цей день справ не планувалось.' : 'На цей день ще нічого не заплановано. Додай завдання знизу.'}</p></div>`}
     </div>
-    <div class="col side-only sticky">${calCardHTML(date)}${legendHTML()}${nextCardHTML()}</div>
+    <div class="col side-only sticky">${calCardHTML(date)}${nextCardHTML()}</div>
     </div>`;
 }
 
@@ -1365,7 +1355,7 @@ function calCardHTML(sel = null) {
   return `<div class="calcard glass">
       <div class="cal-nav">
         <button class="icon-btn small press" data-act="cal-nav" data-d="-1" aria-label="Попередній місяць">${I.left}</button>
-        <span>${sel ? `<b>${monthName} ${first.getFullYear()}</b><br>` : ''}${busy ? `${busy} ${plural(busy, 'день', 'дні', 'днів')} зі справами · ${total} ${plural(total, 'завдання', 'завдання', 'завдань')}` : 'Справ у цьому місяці немає'}</span>
+        <span><b>${monthName} ${first.getFullYear()}</b></span>
         <button class="icon-btn small press" data-act="cal-nav" data-d="1" aria-label="Наступний місяць">${I.right}</button>
       </div>
       <div class="cgrid wds"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span class="we">Сб</span><span class="we">Нд</span></div>
@@ -1385,11 +1375,17 @@ function nextCardHTML() {
 function renderPlanCal(el) {
   const t0 = parseKey(S.today);
   const first = new Date(t0.getFullYear(), t0.getMonth() + S.calOffset, 1);
+  const sel = S.planDate;
+  const list = tasksOn(sel).sort(byTime);
+  const busy = new Set(S.tasks.filter((t) => t.date.startsWith(keyOf(first).slice(0, 7))).map((t) => t.date)).size;
   el.innerHTML = `
-    ${planHead('Календар справ · ' + first.getFullYear(), cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
+    ${planHead(busy ? `${busy} ${plural(busy, 'день', 'дні', 'днів')} зі справами` : 'Справ поки немає', cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first)))}
     <div class="cols">
-      <div class="col">${calCardHTML()}</div>
-      <div class="col sticky">${legendHTML()}${nextCardHTML()}</div>
+      <div class="col">${calCardHTML(sel)}</div>
+      <div class="col sticky">
+        <div class="tsec-h">${esc(cap(fmtLong.format(parseKey(sel))))}</div>
+        <div class="stagger tlist">${list.length ? list.map((t, i) => taskRow(t, i)).join('') : `<div class="calfree">${sel < S.today ? 'Справ не було' : 'Вільний день'}</div>`}</div>
+      </div>
     </div>`;
 }
 
@@ -1423,7 +1419,7 @@ function openTaskSheet(task = null, date = S.today) {
   const monthOff = (d) => { const p = parseKey(d); return (p.getFullYear() - t0.getFullYear()) * 12 + p.getMonth() - t0.getMonth(); };
   let calOff = Math.max(0, monthOff(sel));
   const nextMon = addDays(S.today, 7 - ((t0.getDay() + 6) % 7));
-  const chipDates = [...new Set([S.today, addDays(S.today, 1), addDays(S.today, 2), nextMon])];
+  const chipDates = [S.today, addDays(S.today, 1), addDays(S.today, 2)];
   const rule = task && task.rule ? S.rules.find((r) => r.id === task.rule) : null;
   let rep = rule ? [...rule.repeat] : [];
   const repMode = () => {
@@ -1440,17 +1436,22 @@ function openTaskSheet(task = null, date = S.today) {
     <h2>${task ? 'Змінити завдання' : 'Нове завдання'}</h2>
     <label for="t-title" class="sr-only">Що треба зробити</label>
     <input id="t-title" class="big-input" maxlength="120" placeholder="Що треба зробити?" value="${esc(task ? task.title : '')}" autocomplete="off">
-    <div class="field"><label>Коли</label><div class="dchips" data-chips></div></div>
-    <div class="mcal" data-cal></div>
-    <div class="field"><label>Час</label><div class="timerow" data-timerow></div><small class="warn" data-timehint></small></div>
-    <div class="field"><label>${IREPEAT}Повторювати</label><div class="dchips" data-repchips></div><div class="wdpick" data-wdpick></div><small data-rephint></small></div>
-    <div class="field"><label>${IBELL}Нагадування</label><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
-    <div class="field"><label for="t-note">${INOTE}Нотатка <span class="opt">необовʼязково</span></label>
-      <textarea id="t-note" class="note-input" rows="2" maxlength="500" placeholder="Деталі, адреса, що взяти з собою…">${esc(task?.note || '')}</textarea></div>
+    <div class="dchips" data-chips></div>
+    <div class="mcal" data-cal hidden></div>
+    <div class="set-group opts">
+      <div class="set-row trow"><div class="l"><b>${ICLOCK}Час</b></div><div class="timerow" data-timerow></div></div>
+      <small class="warn" data-timehint></small>
+      <button type="button" class="set-row link" data-open="rem"><div class="l"><b>${IBELL}Нагадування</b></div><span class="v" data-rem-v></span>${I.right}</button>
+      <div class="sbody" data-body="rem" hidden><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
+      <button type="button" class="set-row link" data-open="rep"><div class="l"><b>${IREPEAT}Повторювати</b></div><span class="v" data-rep-v></span>${I.right}</button>
+      <div class="sbody" data-body="rep" hidden><div class="dchips" data-repchips></div><div class="wdpick" data-wdpick></div><small data-rephint></small></div>
+      <button type="button" class="set-row link" data-open="note"><div class="l"><b>${INOTE}Нотатка</b></div><span class="v" data-note-v>${task?.note ? '' : 'Додати'}</span>${I.right}</button>
+      <div class="sbody" data-body="note" ${task?.note ? '' : 'hidden'}><textarea id="t-note" class="note-input" rows="2" maxlength="500" placeholder="Деталі, адреса, що взяти з собою…">${esc(task?.note || '')}</textarea></div>
+    </div>
     <div class="set-group">
-      <div class="set-row"><div class="l"><b><i class="impdot"></i>Важливе</b><span>Appointment, зустріч, подія — день світиться червоною крапкою</span></div>
+      <div class="set-row"><div class="l"><b><i class="impdot"></i>Важливе</b></div>
         <button type="button" class="switch red" role="switch" aria-checked="${!!task?.important}" aria-label="Важливе" data-important></button></div>
-      <div class="set-row"><div class="l"><b>Нотатка при виконанні</b><span>Коли відмітиш виконаним — віконце «Як пройшло?»</span></div>
+      <div class="set-row"><div class="l"><b>Спитати «Як пройшло?»</b></div>
         <button type="button" class="switch" role="switch" aria-checked="${!!task?.askNote}" aria-label="Питати нотатку при виконанні" data-asknote></button></div>
     </div>
     ${task?.doneNote ? `<div class="field"><label>Як пройшло</label><button type="button" class="note-item glass" data-open-result><span>${esc(task.doneNote)}</span></button></div>` : ''}
@@ -1473,13 +1474,16 @@ function openTaskSheet(task = null, date = S.today) {
         .map(([k, l]) => `<button type="button" class="chip glass${m === k ? ' on' : ''}" data-rep="${k}" aria-pressed="${m === k}">${l}</button>`).join('');
       sheet.querySelector('[data-wdpick]').innerHTML = m === 'custom' ? WD_ORDER.map((d) =>
         `<button type="button" class="wd${rep.includes(d) ? ' on' : ''}" data-wd="${d}" aria-pressed="${rep.includes(d)}">${WD_SHORT[d]}</button>`).join('') : '';
+      sheet.querySelector('[data-rep-v]').textContent = rep.length ? cap(repeatLabel(rep)) : 'Ні';
       sheet.querySelector('[data-rephint]').textContent = !rep.length ? '' : task && task.rule
         ? `Повторюється ${repeatLabel(rep)}. Зміни застосуються до цього й наступних разів.`
         : `Повторюватиметься ${repeatLabel(rep)}, починаючи з ${sel === S.today ? 'сьогодні' : fmtDayMonth.format(parseKey(sel))}.`;
     };
     const paintDates = () => {
+      const other = !chipDates.includes(sel);
       sheet.querySelector('[data-chips]').innerHTML = chipDates.map((d) =>
-        `<button type="button" class="chip glass${d === sel ? ' on' : ''}" data-pick="${d}" aria-pressed="${d === sel}">${chipDay(d)}</button>`).join('');
+        `<button type="button" class="chip glass${d === sel ? ' on' : ''}" data-pick="${d}" aria-pressed="${d === sel}">${chipDay(d)}</button>`).join('')
+        + `<button type="button" class="chip glass${other ? ' on' : ''}" data-cal-toggle>${ICAL}${other ? esc(fmtShortDM.format(parseKey(sel))) : 'Дата'}</button>`;
       // календар
       const first = new Date(t0.getFullYear(), t0.getMonth() + calOff, 1);
       const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
@@ -1522,6 +1526,7 @@ function openTaskSheet(task = null, date = S.today) {
       }
       sheet.querySelector('[data-timehint]').textContent = time && endTime && endTime <= time ? 'Кінець має бути пізніше за початок' : '';
       const rt = remindTime();
+      sheet.querySelector('[data-rem-v]').textContent = rt ? (remMode === 'custom' ? 'о ' + rt : (OFFSETS.find(([m]) => m === remMode) || [0, 'о ' + rt])[1]) : 'Ні';
       sheet.querySelector('[data-remhint]').textContent = rt
         ? `Нагадаю ${sel === S.today ? 'сьогодні' : sel === addDays(S.today, 1) ? 'завтра' : fmtDayMonth.format(parseKey(sel))} о ${rt}`
         : time ? 'Без нагадування' : 'Додай час, щоб нагадати «за N хвилин», або вибери свій час';
@@ -1529,6 +1534,7 @@ function openTaskSheet(task = null, date = S.today) {
     sheet.addEventListener('click', (e) => {
       const p = e.target.closest('[data-pick]');
       if (p && !p.disabled) {
+        if (p.classList.contains('mc')) sheet.querySelector('[data-cal]').hidden = true;
         const was = repMode();
         sel = p.dataset.pick; calOff = Math.max(0, monthOff(sel));
         if (was === 'weekly' && !repCustom) rep = [parseKey(sel).getDay()];
@@ -1547,6 +1553,14 @@ function openTaskSheet(task = null, date = S.today) {
         rep = rep.includes(d) ? rep.filter((x) => x !== d) : rep.concat(d);
         if (!rep.length) repCustom = false;
         paintRep(); return;
+      }
+      if (e.target.closest('[data-cal-toggle]')) { const c = sheet.querySelector('[data-cal]'); c.hidden = !c.hidden; return; }
+      const op = e.target.closest('[data-open]');
+      if (op) {
+        const b = sheet.querySelector(`[data-body="${op.dataset.open}"]`);
+        b.hidden = !b.hidden; op.classList.toggle('open', !b.hidden);
+        if (!b.hidden && op.dataset.open === 'note') { sheet.querySelector('[data-note-v]').textContent = ''; sheet.querySelector('#t-note').focus(); }
+        return;
       }
       const cd = e.target.closest('[data-cal-d]');
       if (cd && !cd.disabled) { calOff = Math.max(0, calOff + Number(cd.dataset.calD)); paint(); return; }
@@ -1757,13 +1771,13 @@ function sleepSub(h, v, date) {
   const day = S.sleepDays[date] || {};
   const nextDay = S.sleepDays[addDays(date, 1)] || {};
   switch (h.sleep) {
-    case 'wake': return day.wake ? `Встав о <b class="amt">${day.wake}</b> · план ${p.wake}` : `О ${p.wake}${p.shift ? ' · рання зміна' : ''} · допуск +${WAKE_GRACE} хв`;
-    case 'light': return `До ${fromMin(toMin(p.wake) + 30)} · тап — таймер на 20 хв`;
-    case 'coffee': return 'Остання — не пізніше 15:00';
-    case 'nap': return 'Максимум 20 хв і не після 16:00';
-    case 'dim': return `З ${fromMin(toMin(p.bed) - 120)} · тепле світло, Night Shift`;
-    case 'ideas': return `О ${p.creative} · тап — записати ідеї`;
-    case 'bed': return nextDay.bed ? `Ліг о <b class="amt">${nextDay.bed}</b> · план ${p.bed}` : `О ${p.bed} · не спиш 20 хв — встань, без телефона`;
+    case 'wake': return day.wake ? `о ${p.wake} · встав о <em>${day.wake}</em>` : `о ${p.wake}${p.shift ? ' · рання зміна' : ''}`;
+    case 'light': return `до ${fromMin(toMin(p.wake) + 30)}`;
+    case 'coffee': return 'до 15:00';
+    case 'nap': return 'до 20 хв, не після 16:00';
+    case 'dim': return `з ${fromMin(toMin(p.bed) - 120)}`;
+    case 'ideas': return `о ${p.creative}`;
+    case 'bed': return nextDay.bed ? `о ${p.bed} · ліг о <em>${nextDay.bed}</em>` : `о ${p.bed}`;
     case 'melatonin': return 'Тільки після консультації з лікарем';
   }
   return '';
@@ -2000,10 +2014,10 @@ function sleepChartHTML() {
 
 function renderSleep(el) {
   const cfg = S.sleepCfg;
+  const back = `<button class="icon-btn glass press" data-act="sleep-back" aria-label="Назад">${I.left}</button>`;
   if (!sleepActive()) {
     el.innerHTML = `
-      <div class="head"><div class="sl-back"><button class="icon-btn glass press" data-act="sleep-back" aria-label="Назад">${I.left}</button>
-        <div><div class="eyebrow">Звички</div><h1>Режим сну</h1></div></div></div>
+      ${headHTML({ eyebrow: 'Звички', title: 'Режим сну', back, dot: false })}
       <div class="empty glass"><span class="jbig sl">${IMOON}</span><h2>Перезапуск сну за 4 тижні</h2>
         <p>Щотижня підйом і відбій зсуваються трохи раніше. Застосунок сам додасть звички, нагадуватиме про світло, каву й відбій і покаже прогрес.</p>
         <button class="btn primary press" data-act="sleep-setup">Налаштувати</button></div>`;
@@ -2014,63 +2028,81 @@ function renderSleep(el) {
   const p = sleepPlan();
   const wk = st ? st.week + 1 : 0;
   const title = !st ? 'Скоро старт' : st.idx === STAGES - 1 && wk > STAGES ? 'Ціль тримається' : `Етап ${st.idx + 1} з ${STAGES}`;
-  // пропозиція повторити етап, якщо минулого тижня вставав вчасно менше 5 разів із 7
-  let banner = '';
+  // пропозиція повторити етап — один рядок
+  let note = '';
   if (st && st.week >= 1 && st.idx > 0) {
     const ws = addDays(cfg.start, (st.week - 1) * 7);
     const n = onTimeIn(ws, addDays(ws, 6));
     let asked = '';
     try { asked = localStorage.getItem('sleepRepeatAsked') || ''; } catch (e) { /* ок */ }
     if (n < 5 && asked !== String(st.week)) {
-      banner = `<div class="sl-banner glass"><b>Минулого тижня встав вчасно ${n} з 7</b><span>Етап краще повторити — так зсув закріпиться.</span>
-        <div class="row-actions"><button class="btn block glass press" data-act="sleep-norepeat" data-w="${st.week}">Ні, далі</button><button class="btn primary block press" data-act="sleep-repeat">Повторити тиждень</button></div></div>`;
+      note = `<div class="sl-note glass"><span>Вчасно минулого тижня: <b>${n} з 7</b></span>
+        <button class="sl-note-btn press" data-act="sleep-repeat">Повторити</button>
+        <button class="sl-note-x" data-act="sleep-norepeat" data-w="${st.week}" aria-label="Ні, далі">${I.x}</button></div>`;
     }
   }
   const hint = p ? sleepHint(p) : '';
-  // журнал за 7 днів
-  const rows = [];
+  const line = stages.map((sg, i) => `${i ? `<u class="${st && st.idx >= i ? 'y' : ''}"></u>` : ''}<i class="${st && st.idx > i ? 'y' : st && st.idx === i ? 'c' : ''}"></i>`).join('');
   let sum = 0, cnt = 0;
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 7; i++) { const r = S.sleepDays[addDays(S.today, -i)] || {}; const d = sleepMinutes(r.bed, r.wake); if (d != null) { sum += d; cnt++; } }
+  const shifts = Object.values(S.sleepDays).filter((r) => r.shift && r.date >= S.today).length;
+  const streak = sleepStreak();
+  el.innerHTML = `
+    ${headHTML({ eyebrow: 'Режим сну' + (st ? ' · тиждень ' + wk : ''), title, back,
+      actions: `<button class="icon-btn glass press" data-act="sleep-setup" aria-label="Налаштування режиму сну">${I.gear}</button>` })}
+    <div class="cols">
+    <div class="col sticky">
+    <div class="sl-today glass">
+      ${p ? `<div class="sl-big"><span><small>Підйом${p.shift ? ' · зміна' : ''}</small><b>${p.wake}</b></span><span><small>Відбій</small><b>${p.bed}</b></span></div>
+      <div class="sl-small"><span>Світло до <b>${fromMin(toMin(p.wake) + 30)}</b></span><span>Кава до <b>15:00</b></span><span>Тьмяне з <b>${fromMin(toMin(p.bed) - 120)}</b></span></div>`
+      : `<div class="sl-hint">Програма почнеться ${esc(fmtLong.format(parseKey(cfg.start)))}.</div>`}
+      <div class="sl-line">${line}</div>
+      <div class="sl-line-l">${stages.map((sg) => `<span>${sg.wake}</span>`).join('')}</div>
+      ${hint ? `<div class="sl-hint">${esc(hint)}</div>` : ''}
+    </div>
+    ${note}
+    </div>
+    <div class="col">
+    <div class="sl-sec glass"><div class="sl-h"><b>Підйом за 30 днів</b><span>${streak ? streak + ' ' + plural(streak, 'день', 'дні', 'днів') + ' поспіль вчасно' : 'план пунктиром'}</span></div>${sleepChartHTML()}</div>
+    <div class="set-group">
+      <button class="set-row link" data-act="sleep-log"><div class="l"><b>Журнал сну</b><span>${cnt ? 'середній сон ' + fmtDur(Math.round(sum / cnt)) : 'записуй, коли ліг і встав'}</span></div>${I.right}</button>
+      <button class="set-row link" data-act="sleep-shifts"><div class="l"><b>Ранні зміни</b><span>${shifts ? shifts + ' ' + plural(shifts, 'запланована', 'заплановані', 'запланованих') : 'немає запланованих'}</span></div>${I.right}</button>
+      <button class="set-row link" data-act="sleep-ideas"><div class="l"><b>Нічні ідеї</b><span>${S.ideas.length ? S.ideas.length + ' ' + plural(S.ideas.length, 'запис', 'записи', 'записів') : 'поки порожньо'}</span></div>${I.right}</button>
+    </div>
+    </div>
+    </div>`;
+}
+function openSleepLogSheet() {
+  const rows = [];
+  for (let i = 0; i < 14; i++) {
     const d = addDays(S.today, -i);
     const r = S.sleepDays[d] || {};
     const dur = sleepMinutes(r.bed, r.wake);
-    if (dur != null) { sum += dur; cnt++; }
-    rows.push(`<button class="sl-row" data-act="sleep-day" data-date="${d}"><span class="d">${esc(i === 0 ? 'Сьогодні' : i === 1 ? 'Вчора' : cap(fmtWdShortDate.format(parseKey(d))))}${r.shift ? ' <i class="shift">зміна</i>' : ''}</span>
+    rows.push(`<button class="sl-row" data-day="${d}"><span class="d">${esc(i === 0 ? 'Сьогодні' : i === 1 ? 'Вчора' : cap(fmtWdShortDate.format(parseKey(d))))}${r.shift ? ' <i class="shift">зміна</i>' : ''}</span>
       <span class="t">${r.bed || '—'} → ${r.wake || '—'}</span><span class="dur">${dur != null ? fmtDur(dur) : ''}</span></button>`);
   }
-  const shifts = Object.values(S.sleepDays).filter((r) => r.shift && r.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : 1));
-  const ws7 = addDays(S.today, -6);
-  el.innerHTML = `
-    <div class="head"><div class="sl-back"><button class="icon-btn glass press" data-act="sleep-back" aria-label="Назад">${I.left}</button>
-      <div><div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>Режим сну${st ? ' · тиждень ' + wk : ''}</div><h1>${esc(title)}</h1></div></div>
-      <div class="head-actions"><button class="icon-btn glass press" data-act="sleep-setup" aria-label="Налаштування режиму сну">${I.gear}</button></div></div>
-    ${banner}
-    <div class="cols">
-    <div class="col sticky">
-    ${p ? `<div class="sl-today glass">
-      <div class="sl-big"><span>${ISUNRISE}<small>Підйом${p.shift ? ' · зміна' : ''}</small><b>${p.wake}</b></span><span>${IMOON}<small>Відбій</small><b>${p.bed}</b></span></div>
-      <div class="sl-small"><span>Світло до <b>${fromMin(toMin(p.wake) + 30)}</b></span><span>Кава до <b>15:00</b></span><span>Тьмяне з <b>${fromMin(toMin(p.bed) - 120)}</b></span><span>Ідеї о <b>${p.creative}</b></span></div>
-      ${hint ? `<div class="sl-hint">${esc(hint)}</div>` : ''}
-    </div>` : `<div class="sl-today glass"><div class="sl-hint">Програма почнеться ${esc(fmtLong.format(parseKey(cfg.start)))}.</div></div>`}
-    <div class="sl-stages">${stages.map((s, i) => `<div class="sl-stage${st && st.idx === i ? ' on' : ''}${st && st.idx > i ? ' past' : ''}"><small>Етап ${i + 1}${i === STAGES - 1 ? '+' : ''}</small><b>${s.wake}</b><span>${s.bed}</span></div>`).join('')}</div>
-    ${st && st.idx > 0 ? `<button class="btn block glass press sl-rep" data-act="sleep-repeat">Повторити тиждень (етап ${st.idx})</button>` : ''}
-    <div class="sl-kpis">
-      <div class="glass"><b>${sleepStreak()}</b><small>${plural(sleepStreak(), 'день', 'дні', 'днів')} поспіль вчасно</small></div>
-      <div class="glass"><b>${onTimeIn(ws7 < cfg.start ? cfg.start : ws7, S.today)}/7</b><small>підйомів вчасно за тиждень</small></div>
-      <div class="glass"><b>${cnt ? fmtDur(Math.round(sum / cnt)).replace(' год', 'г').replace(' хв', 'хв') : '—'}</b><small>середній сон за тиждень</small></div>
-    </div>
-    </div>
-    <div class="col">
-    <div class="sl-sec glass"><div class="sl-h"><b>Підйом за 30 днів</b></div>${sleepChartHTML()}</div>
-    <div class="sl-sec glass"><div class="sl-h"><b>Журнал сну</b><span>тап — змінити</span></div>${rows.join('')}</div>
-    <div class="sl-sec glass"><div class="sl-h"><b>Ранні зміни</b><button class="small-btn press" data-act="sleep-shift">Додати</button></div>
-      ${shifts.length ? shifts.map((r) => `<button class="sl-row" data-act="sleep-day" data-date="${r.date}"><span class="d">${esc(cap(fmtWdShortDate.format(parseKey(r.date))))}</span><span class="t">підйом ${r.shift}</span><span class="dur"></span></button>`).join('')
-        : '<div class="sc-empty">У день зміни підйом і світло нагадаю за часом зміни, а відбій — за планом.</div>'}</div>
-    <div class="sl-sec glass"><div class="sl-h"><b>Нічні ідеї</b><button class="small-btn press" data-act="sleep-idea">Записати</button></div>
-      ${S.ideas.length ? S.ideas.slice(0, 30).map((x) => `<button class="sl-idea" data-act="idea-open" data-id="${x.id}"><small>${esc(fmtShortDM.format(parseKey(x.date)))}</small><span>${esc(x.text)}</span></button>`).join('')
-        : '<div class="sc-empty">Тут збиратиметься все, що запишеш у «Скинути ідеї».</div>'}</div>
-    </div>
-    </div>`;
+  openSheet(`<h2>Журнал сну</h2><div class="amount-sub">Тап по ночі — змінити час</div><div class="sl-list">${rows.join('')}</div>`, (sheet) => {
+    sheet.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => openSleepDaySheet(b.dataset.day)));
+  });
+}
+function openShiftsSheet() {
+  const list = Object.values(S.sleepDays).filter((r) => r.shift && r.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : 1));
+  openSheet(`<h2>Ранні зміни</h2>
+    <div class="amount-sub">У день зміни підйом і світло нагадаю за часом зміни, а відбій — за планом.</div>
+    ${list.length ? `<div class="sl-list">${list.map((r) => `<button class="sl-row" data-day="${r.date}"><span class="d">${esc(cap(fmtWdShortDate.format(parseKey(r.date))))}</span><span class="t">підйом ${r.shift}</span><span class="dur"></span></button>`).join('')}</div>` : ''}
+    <button class="btn primary block press" data-add>Додати зміну</button>`, (sheet) => {
+    sheet.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => openSleepDaySheet(b.dataset.day)));
+    sheet.querySelector('[data-add]').addEventListener('click', () => openShiftSheet());
+  });
+}
+function openIdeasListSheet() {
+  openSheet(`<h2>Нічні ідеї</h2>
+    ${S.ideas.length ? `<div class="sl-list">${S.ideas.slice(0, 50).map((x) => `<button class="sl-idea" data-id="${x.id}"><small>${esc(fmtShortDM.format(parseKey(x.date)))}</small><span>${esc(x.text)}</span></button>`).join('')}</div>`
+      : '<div class="amount-sub">Тут збиратиметься все, що запишеш у «Скинути ідеї».</div>'}
+    <button class="btn primary block press" data-add>Записати ідею</button>`, (sheet) => {
+    sheet.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => { const idea = S.ideas.find((x) => x.id === b.dataset.id); if (idea) openIdeaEdit(idea); }));
+    sheet.querySelector('[data-add]').addEventListener('click', () => openIdeasSheet(null, S.today));
+  });
 }
 
 function openSleepDaySheet(date) {
@@ -2234,8 +2266,8 @@ const jDaySub = (d) => (d === S.today || d === addDays(S.today, -1) ? fmtWdShort
 
 function journalCard(e, i) {
   const time = e.at ? fmtTime.format(new Date(e.at)) : '';
-  const pill = e.kind === 'me' ? `<span class="jpill jp-me">Мій запис</span>`
-    : `<span class="jpill jp-${e.kind}">${e.done ? I.check : ''}<span>${esc(e.label)}</span></span>`;
+  const pill = e.kind === 'me' ? '<span></span>'
+    : `<span class="jsrc jp-${e.kind}">${e.done ? I.check : ''}<span>${esc(e.label)}</span></span>`;
   return `<button class="jcard glass" data-act="j-open" data-kind="${e.kind}" data-ref="${esc(e.ref)}" style="--i:${i}">
     <span class="jtop">${pill}<span class="jtime">${esc(time)}</span></span>
     <span class="jtext">${esc(e.text)}</span>
@@ -2266,18 +2298,12 @@ function journalListHTML() {
 }
 function renderJournal(el) {
   const total = journalEntries().length;
-  const month = cap(fmtMonth.format(parseKey(S.today)).replace(' р.', ''));
+  const month = cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(parseKey(S.today)));
   el.innerHTML = `
-    <div class="head">
-      <div><div class="eyebrow"><span class="${syncDotClass()}" data-sync-dot></span>${esc(month)}${total ? ' · ' + total + ' ' + plural(total, 'запис', 'записи', 'записів') : ''}</div><h1>Щоденник</h1></div>
-      <div class="head-actions">
-        <button class="icon-btn glass press${S.jSearch ? ' on' : ''}" data-act="j-search" aria-label="Пошук" aria-pressed="${S.jSearch}">${I.search}</button>
-        <button class="icon-btn lime press" data-act="j-add" aria-label="Новий запис">${I.plus}</button>
-      </div>
-    </div>
+    ${headHTML({ eyebrow: month + (total ? ' · ' + total + ' ' + plural(total, 'запис', 'записи', 'записів') : ''), title: 'Щоденник',
+      actions: `<button class="icon-btn glass press${S.jSearch ? ' on' : ''}" data-act="j-search" aria-label="Пошук" aria-pressed="${S.jSearch}">${I.search}</button><button class="icon-btn lime press" data-act="j-add" aria-label="Новий запис">${I.plus}</button>` })}
     ${S.jSearch ? `<label class="jsearch glass">${I.search}<input data-jq type="search" placeholder="Пошук у записах" value="${esc(S.jQuery)}" autocomplete="off" enterkeyhint="search"></label>` : ''}
-    <div class="jchips" role="tablist" aria-label="Фільтр">${J_FILTERS.map(([k, l]) =>
-      `<button role="tab" class="jchip${S.jFilter === k ? ' on' : ''}" data-act="j-filter" data-f="${k}" aria-selected="${S.jFilter === k}">${k !== 'all' ? `<i class="d-${k}"></i>` : ''}${l}</button>`).join('')}</div>
+    ${segHTML(J_FILTERS, S.jFilter, 'j-filter', 'Фільтр')}
     <div class="jlist" data-jlist>${journalListHTML()}</div>`;
   const qi = el.querySelector('[data-jq]');
   if (qi) qi.addEventListener('input', () => { S.jQuery = qi.value; el.querySelector('[data-jlist]').innerHTML = journalListHTML(); });
@@ -2421,6 +2447,10 @@ views.addEventListener('click', async (e) => {
     const h = S.habits.find((x) => x.id === id);
     const rs = currentView().querySelector(`[data-rs="${id}"]`);
     if (rs) rs.textContent = rowScore(h, mi);
+  } else if (act === 'prog') {
+    if (S.progMode === t.dataset.v) return;
+    S.progMode = t.dataset.v;
+    rerenderAnimated();
   } else if (act === 'month') {
     S.monthOffset = Math.min(0, S.monthOffset + Number(t.dataset.d));
     rerenderAnimated();
@@ -2432,8 +2462,8 @@ views.addEventListener('click', async (e) => {
     placeKnob(currentView());
     setTimeout(() => rerenderAnimated(), 120);
   } else if (act === 'plan-mode') {
-    if (S.planMode === t.dataset.m) return;
-    S.planMode = t.dataset.m;
+    if (S.planMode === t.dataset.v) return;
+    S.planMode = t.dataset.v;
     if (S.planMode === 'cal') { const p = parseKey(S.planDate), n = parseKey(S.today); S.calOffset = (p.getFullYear() - n.getFullYear()) * 12 + p.getMonth() - n.getMonth(); }
     rerenderAnimated();
   } else if (act === 'plan-day') {
@@ -2443,6 +2473,7 @@ views.addEventListener('click', async (e) => {
   } else if (act === 'plan-open') {
     S.planDate = t.dataset.date;
     S.calOffset = monthsFromToday(S.planDate);
+    if (S.planMode === 'cal') { rerender(); return; } // у календарі — показуємо справи дня під ним
     S.planMode = 'day';
     rerenderAnimated();
   } else if (act === 'cal-nav') {
@@ -2468,6 +2499,12 @@ views.addEventListener('click', async (e) => {
   } else if (act === 'sleep-norepeat') {
     try { localStorage.setItem('sleepRepeatAsked', t.dataset.w); } catch (err) { /* ок */ }
     rerender();
+  } else if (act === 'sleep-log') {
+    openSleepLogSheet();
+  } else if (act === 'sleep-shifts') {
+    openShiftsSheet();
+  } else if (act === 'sleep-ideas') {
+    openIdeasListSheet();
   } else if (act === 'sleep-day') {
     openSleepDaySheet(t.dataset.date);
   } else if (act === 'sleep-shift') {
@@ -2478,8 +2515,8 @@ views.addEventListener('click', async (e) => {
     const idea = S.ideas.find((x) => x.id === t.dataset.id);
     if (idea) openIdeaEdit(idea);
   } else if (act === 'j-filter') {
-    if (S.jFilter === t.dataset.f) return;
-    S.jFilter = t.dataset.f;
+    if (S.jFilter === t.dataset.v) return;
+    S.jFilter = t.dataset.v;
     rerender();
   } else if (act === 'j-search') {
     S.jSearch = !S.jSearch;
@@ -2509,7 +2546,7 @@ document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () 
   if (b.dataset.tab === 'plan') { S.planDate = S.today; S.planMode = 'day'; S.calOffset = 0; }
   showTab(b.dataset.tab);
 }));
-window.addEventListener('resize', () => { moveIndicator(); if (S.tab === 'stats') placeKnob(currentView()); });
+window.addEventListener('resize', () => { moveIndicator(); });
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installPrompt = e; if (S.tab === 'today') rerender(); });
 
 document.addEventListener('visibilitychange', () => {
@@ -2548,7 +2585,8 @@ async function start() {
   requestPersistence();
   await loadState();
   await generateInstances();
-  const want = new URLSearchParams(location.search).get('tab');
+  let want = new URLSearchParams(location.search).get('tab');
+  if (want === 'table' || want === 'stats') { S.progMode = want === 'table' ? 'table' : 'week'; want = 'progress'; }
   showTab(TABS.includes(want) ? want : 'today');
   initSync(onServerMerge);
   maybeShowIntro();
