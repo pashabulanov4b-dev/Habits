@@ -785,3 +785,19 @@ small.warn:empty { display: none; }
   .view[data-view="journal"] > * { max-width: 760px; }
 }
 @media (max-width: 359px) { .jchips { gap: 5px; } .jchip { padding: 0 10px; font-size: 13px; gap: 5px; } }
+
+/* ===== Важливі справи: червона крапка ===== */
+:root { --red: #FF5A5F; }
+.dot.imp, .cdots i.imp, .legend .l-imp { background: var(--red); box-shadow: 0 0 8px rgba(255,90,95,.85); }
+.dot.imp { animation: impGlow 2.4s ease-in-out infinite; }
+@keyframes impGlow { 50% { box-shadow: 0 0 2px rgba(255,90,95,.4); } }
+.ccell.imp:not(.today) { border-color: rgba(255,90,95,.35); }
+.mc.imp::after { background: var(--red); box-shadow: 0 0 5px rgba(255,90,95,.8); }
+.impdot { display: inline-block; width: 8px; height: 8px; border-radius: 4px; background: var(--red); box-shadow: 0 0 8px rgba(255,90,95,.85); margin-right: 7px; vertical-align: 2px; flex-shrink: 0; }
+.tgroup-h .impdot { align-self: center; margin-right: 0; }
+.task.imp:not(.done) { border-color: rgba(255,90,95,.32); }
+.task.imp.done .impdot { background: rgba(242,244,247,.35); box-shadow: none; }
+.switch.red[aria-checked="true"] { background: var(--red); }
+.set-row .l b .impdot { vertical-align: 1px; }
+@media (prefers-reduced-motion: reduce) { .dot.imp { animation: none; } }
+.dot.imp { width: 7px; height: 7px; border-radius: 4px; } .cdots i.imp { width: 6px; height: 6px; }

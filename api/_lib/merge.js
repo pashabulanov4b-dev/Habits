@@ -63,6 +63,7 @@ export function cleanTask(t) {
     done: !!t.done,
     note: str(t.note, 500),
     askNote: !!t.askNote,
+    important: !!t.important,
     doneNote: str(t.doneNote, 500),
     jAt: num(t.jAt), // >0 — нотатка «як пройшло» додана в щоденник
     order: num(t.order),

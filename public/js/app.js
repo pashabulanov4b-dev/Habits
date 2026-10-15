@@ -1052,7 +1052,9 @@ function dayState(d) {
   const l = tasksOn(d);
   if (!l.length) return null;
   const open = l.filter((t) => !t.done).length;
-  return { total: l.length, open, cls: !open ? 'done' : d < S.today ? 'late' : 'open' };
+  // важливе (Appointment, подія) — червона крапка; минулі виконані важливі вже не горять
+  const imp = l.some((t) => t.important && (!t.done || d >= S.today));
+  return { total: l.length, open, imp, cls: imp ? 'imp' : !open ? 'done' : d < S.today ? 'late' : 'open' };
 }
 
 async function saveTask(data) {
@@ -1062,7 +1064,7 @@ async function saveTask(data) {
   const endTime = time && data.endTime && data.endTime > time ? data.endTime : '';
   const remindAt = data.remind ? data.remindAt || '' : '';
   const fields = { title: data.title, date: data.date, time, endTime, remind: !!remindAt, remindAt,
-    note: (data.note || '').slice(0, 500), askNote: !!data.askNote };
+    note: (data.note || '').slice(0, 500), askNote: !!data.askNote, important: !!data.important };
   if (t) {
     Object.assign(t, fields, { updatedAt: now, dirty: true });
   } else {
@@ -1107,10 +1109,10 @@ function taskRow(t, i, { carried = false, compact = false } = {}) {
   const now = isNow(t);
   const rem = remindAtOf(t);
   const sub = meta || (now ? 'Зараз · до ' + t.endTime : '') || (!compact && rem && !t.done ? 'Нагадаю о ' + rem : '');
-  return `<div class="task${compact ? ' compact' : ' glass'}${t.done ? ' done' : ''}${carried ? ' late' : ''}${now ? ' now' : ''}" data-task="${t.id}" style="--i:${i}">
+  return `<div class="task${compact ? ' compact' : ' glass'}${t.important ? ' imp' : ''}${t.done ? ' done' : ''}${carried ? ' late' : ''}${now ? ' now' : ''}" data-task="${t.id}" style="--i:${i}">
     <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
     <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
-      <span class="tt">${esc(t.title)}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
+      <span class="tt">${t.important ? '<i class="impdot" aria-label="Важливе"></i>' : ''}${esc(t.title)}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
       ${noteLine(t, compact)}
     </button>
     ${t.askNote ? `<button class="tnote${t.doneNote ? ' has' : ''}" data-act="task-note" data-id="${t.id}" aria-label="Нотатка: ${esc(t.title)}">${INOTE}</button>` : ''}
@@ -1172,7 +1174,7 @@ function renderPlanAhead(el) {
     const open = items.filter((t) => !t.done).length;
     const sub = d === S.today || d === addDays(S.today, 1) ? fmtWdShortDate.format(parseKey(d)) : fmtDayMonth.format(parseKey(d));
     return `<div class="tgroup glass" style="--i:${gi}">
-      <div class="tgroup-h"><b class="${d === S.today ? 'lime' : ''}">${relDay(d)}</b><span>${esc(sub)}</span><em>${open ? open + ' ' + plural(open, 'справа', 'справи', 'справ') : 'усе ✓'}</em></div>
+      <div class="tgroup-h">${items.some((t) => t.important && !t.done) ? '<i class="impdot" aria-label="Є важливе"></i>' : ''}<b class="${d === S.today ? 'lime' : ''}">${relDay(d)}</b><span>${esc(sub)}</span><em>${open ? open + ' ' + plural(open, 'справа', 'справи', 'справ') : 'усе ✓'}</em></div>
       ${items.map((t) => taskRow(t, i++, { carried: t.date < S.today, compact: true })).join('')}
     </div>`;
   }).join('');
@@ -1195,8 +1197,9 @@ function calCardHTML(sel = null) {
     const d = keyOf(new Date(first.getFullYear(), first.getMonth(), n));
     const st = dayState(d);
     if (st) { busy++; total += st.total; }
-    const dots = st ? Array.from({ length: Math.min(3, st.total) }, () => `<i class="${st.cls}"></i>`).join('') : '';
-    cells.push(`<button class="ccell${st ? ' has' : ''}${d === S.today ? ' today' : ''}${d < S.today ? ' past' : ''}${d === sel ? ' sel' : ''}" data-act="plan-open" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ', вільно'}">
+    const base = st ? (!st.open ? 'done' : d < S.today ? 'late' : 'open') : '';
+    const dots = st ? Array.from({ length: Math.min(3, st.total) }, (_, k) => `<i class="${k === 0 && st.imp ? 'imp' : base}"></i>`).join('') : '';
+    cells.push(`<button class="ccell${st ? ' has' : ''}${st && st.imp ? ' imp' : ''}${d === S.today ? ' today' : ''}${d < S.today ? ' past' : ''}${d === sel ? ' sel' : ''}" data-act="plan-open" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}${st ? ', завдань: ' + st.total : ', вільно'}">
       <span>${n}</span><span class="cdots">${dots}</span></button>`);
   }
   const monthName = cap(new Intl.DateTimeFormat('uk', { month: 'long' }).format(first));
@@ -1211,7 +1214,7 @@ function calCardHTML(sel = null) {
     </div>`;
 }
 const monthsFromToday = (d) => { const p = parseKey(d), n = parseKey(S.today); return (p.getFullYear() - n.getFullYear()) * 12 + p.getMonth() - n.getMonth(); };
-const legendHTML = () => '<div class="legend"><span><i class="l-open"></i>Заплановано</span><span><i class="l-late"></i>Не виконано</span><span><i class="l-done"></i>Усе зроблено</span></div>';
+const legendHTML = () => '<div class="legend"><span><i class="l-open"></i>Заплановано</span><span><i class="l-late"></i>Не виконано</span><span><i class="l-done"></i>Усе зроблено</span><span><i class="l-imp"></i>Важливе</span></div>';
 function nextCardHTML() {
   const upcoming = S.tasks.filter((t) => !t.done && t.date >= S.today).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : byTime(a, b)))[0];
   return upcoming ? `<button class="nextcard glass press" data-act="plan-open" data-date="${upcoming.date}">
@@ -1274,6 +1277,8 @@ function openTaskSheet(task = null, date = S.today) {
     <div class="field"><label for="t-note">${INOTE}Нотатка <span class="opt">необовʼязково</span></label>
       <textarea id="t-note" class="note-input" rows="2" maxlength="500" placeholder="Деталі, адреса, що взяти з собою…">${esc(task?.note || '')}</textarea></div>
     <div class="set-group">
+      <div class="set-row"><div class="l"><b><i class="impdot"></i>Важливе</b><span>Appointment, зустріч, подія — день світиться червоною крапкою</span></div>
+        <button type="button" class="switch red" role="switch" aria-checked="${!!task?.important}" aria-label="Важливе" data-important></button></div>
       <div class="set-row"><div class="l"><b>Нотатка при виконанні</b><span>Коли відмітиш виконаним — віконце «Як пройшло?»</span></div>
         <button type="button" class="switch" role="switch" aria-checked="${!!task?.askNote}" aria-label="Питати нотатку при виконанні" data-asknote></button></div>
     </div>
@@ -1284,6 +1289,8 @@ function openTaskSheet(task = null, date = S.today) {
     const title = sheet.querySelector('#t-title');
     const ask = sheet.querySelector('[data-asknote]');
     ask.addEventListener('click', () => ask.setAttribute('aria-checked', ask.getAttribute('aria-checked') !== 'true'));
+    const imp = sheet.querySelector('[data-important]');
+    imp.addEventListener('click', () => imp.setAttribute('aria-checked', imp.getAttribute('aria-checked') !== 'true'));
     sheet.querySelector('[data-open-result]')?.addEventListener('click', () => openTaskNoteSheet(task));
     // Перемальовуємо частинами: поля часу НЕ чіпаємо, поки людина в них друкує,
     // інакше на компʼютері курсор вилітає з поля після першої цифри.
@@ -1300,7 +1307,7 @@ function openTaskSheet(task = null, date = S.today) {
       for (let n = 1; n <= days; n++) {
         const d = keyOf(new Date(first.getFullYear(), first.getMonth(), n));
         const st = dayState(d);
-        cells += `<button type="button" class="mc${d === sel ? ' on' : ''}${d === S.today ? ' today' : ''}${st && d >= S.today ? ' has' : ''}" data-pick="${d}" ${d < S.today ? 'disabled' : ''} aria-label="${esc(fmtLong.format(parseKey(d)))}">${n}</button>`;
+        cells += `<button type="button" class="mc${d === sel ? ' on' : ''}${d === S.today ? ' today' : ''}${st && d >= S.today ? ' has' : ''}${st && st.imp && d >= S.today ? ' imp' : ''}" data-pick="${d}" ${d < S.today ? 'disabled' : ''} aria-label="${esc(fmtLong.format(parseKey(d)))}">${n}</button>`;
       }
       sheet.querySelector('[data-cal]').innerHTML = `
         <div class="mc-head"><button type="button" class="icon-btn small" data-cal-d="-1" ${calOff <= 0 ? 'disabled' : ''} aria-label="Попередній місяць">${I.left}</button>
@@ -1377,7 +1384,8 @@ function openTaskSheet(task = null, date = S.today) {
       if (time && endTime && endTime <= time) { toast('Кінець має бути пізніше за початок'); return; }
       const rt = remindTime();
       const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt,
-        note: sheet.querySelector('#t-note').value.trim(), askNote: ask.getAttribute('aria-checked') === 'true' });
+        note: sheet.querySelector('#t-note').value.trim(), askNote: ask.getAttribute('aria-checked') === 'true',
+        important: imp.getAttribute('aria-checked') === 'true' });
       closeSheet();
       toast(task ? 'Збережено' : `Додано ${onDay(saved.date)}`);
       if (saved.remind) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));

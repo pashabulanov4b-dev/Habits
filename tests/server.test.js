@@ -149,4 +149,6 @@ test('щоденник: власні записи і позначка «в що�
   assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2, note: 'x', jAt: 77 }).jAt, 77);
   assert.equal(cleanMark({ habitId: 'h-note1', date: '2026-10-12', value: 2 }).jAt, 0);
   assert.equal(cleanTask({ id: 't-note1', date: '2026-10-12', doneNote: 'ok', jAt: 5 }).jAt, 5);
+  assert.equal(cleanTask({ id: 't-imp1', date: '2026-10-12', important: 1 }).important, true);
+  assert.equal(cleanTask({ id: 't-imp2', date: '2026-10-12' }).important, false);
 });
