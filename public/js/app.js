@@ -1575,7 +1575,7 @@ function renderJournal(el) {
     </div>
     ${S.jSearch ? `<label class="jsearch glass">${I.search}<input data-jq type="search" placeholder="Пошук у записах" value="${esc(S.jQuery)}" autocomplete="off" enterkeyhint="search"></label>` : ''}
     <div class="jchips" role="tablist" aria-label="Фільтр">${J_FILTERS.map(([k, l]) =>
-      `<button role="tab" class="jchip${S.jFilter === k ? ' on' : ' glass'}" data-act="j-filter" data-f="${k}" aria-selected="${S.jFilter === k}">${k !== 'all' ? `<i class="d-${k}"></i>` : ''}${l}</button>`).join('')}</div>
+      `<button role="tab" class="jchip${S.jFilter === k ? ' on' : ''}" data-act="j-filter" data-f="${k}" aria-selected="${S.jFilter === k}">${k !== 'all' ? `<i class="d-${k}"></i>` : ''}${l}</button>`).join('')}</div>
     <div class="jlist" data-jlist>${journalListHTML()}</div>`;
   const qi = el.querySelector('[data-jq]');
   if (qi) qi.addEventListener('input', () => { S.jQuery = qi.value; el.querySelector('[data-jlist]').innerHTML = journalListHTML(); });

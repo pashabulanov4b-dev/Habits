@@ -740,9 +740,8 @@ small.warn:empty { display: none; }
 .jsearch input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; font-size: 16px; color: var(--text); }
 .jsearch input::placeholder { color: var(--faint); }
 
-.jchips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
-.jchips::-webkit-scrollbar { display: none; }
-.jchip { flex-shrink: 0; min-height: 38px; padding: 0 14px; border-radius: 19px; display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; color: rgba(242,244,247,.82); transition: background .25s, color .25s; }
+.jchips { display: flex; flex-wrap: wrap; gap: 6px; position: relative; z-index: 1; }
+.jchip { flex-shrink: 0; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); transform: translateZ(0); min-height: 38px; padding: 0 14px; border-radius: 19px; display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; color: rgba(242,244,247,.82); transition: background .25s, color .25s; }
 .jchip.on { background: rgba(255,255,255,.92); color: #0B0D10; }
 .jchip i { width: 7px; height: 7px; border-radius: 4px; }
 .d-me { background: var(--teal); } .d-habit { background: var(--lime); } .d-task { background: var(--violet); }
