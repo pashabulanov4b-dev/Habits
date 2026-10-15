@@ -723,7 +723,7 @@ small.warn:empty { display: none; }
    Щоденник
    ===================================================================== */
 :root { --violet: #B3A8FF; --teal: #6FE3D3; }
-.tabbar { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
+.tabbar { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 @media (max-width: 767px) {
   .tab { font-size: 10px; letter-spacing: -.01em; }
   .tab span { max-width: 100%; overflow: hidden; text-overflow: clip; white-space: nowrap; }
