@@ -169,7 +169,7 @@ function longestOf(h) {
   return best;
 }
 const streakLabel = (h) => (isDaily(h) ? String(streakOf(h)) : streakOf(h) + ' тиж.');
-const nextVal = (v) => (v === 0 ? 2 : v === 2 ? 1 : 0); // тап: виконано → мінімум → скинути
+const nextVal = (v) => (v === 0 ? 2 : 0); // тап: відмічено ↔ ні (мінімум лишився тільки у звичок з кількістю)
 
 /* ================= Запис змін (спершу на телефон) ================= */
 // amount / note: undefined = лишити як було
@@ -344,7 +344,7 @@ function habitSub(h, v, date = S.selDate) {
     return `Ціль: ${fmtNum(h.target)}${u} · мін. ${fmtNum(minOf(h))}`;
   }
   if (v === 1) return 'Мінімум: ' + esc(h.min || '—');
-  return 'Мета: ' + esc(h.full || '—') + (h.min ? ' · мін. ' + esc(h.min) : '');
+  return h.full ? 'Мета: ' + esc(h.full) : 'Тап — відмітити';
 }
 
 // Кружок справа: галочка / МІН / число (19) для часткового виконання
@@ -397,7 +397,7 @@ function renderToday(el) {
       ? `<div class="empty glass"><p>Цього дня звичок ще не було.</p></div>`
       : `<div class="empty glass">
           <h2>Почнімо з однієї звички</h2>
-          <p>Для кожної задай повну мету і мінімум — на дні, коли зовсім немає сил.</p>
+          <p>Відмічай щодня. Для звичок з кількістю можна задати ще й мінімум — на дні, коли зовсім немає сил.</p>
           <div class="chips">${TEMPLATES.map((tp, i) => `<button class="chip glass press" data-act="template" data-i="${i}">${esc(tp.name)}</button>`).join('')}</div>
           <button class="btn primary press" data-act="add">${I.plus.replace('<svg', '<svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"')}Своя звичка</button>
         </div>`;
@@ -737,7 +737,6 @@ function openHabitSheet(h = null) {
     </div>
     <div data-kind-check>
       <div class="field"><label for="f-full">Повна мета</label><input id="f-full" maxlength="40" placeholder="Напр. лягти до 23:00" value="${esc(isCount(v) ? '' : v.full)}" autocomplete="off"></div>
-      <div class="field"><label for="f-min">Мінімум на поганий день</label><input id="f-min" maxlength="40" placeholder="Напр. лягти до 00:00" value="${esc(isCount(v) ? '' : v.min)}" autocomplete="off"><small>Настільки мало, щоб це можна було зробити за будь-якого настрою.</small></div>
     </div>
     <div class="field"><label for="f-note">${INOTE}Нотатка до звички <span class="opt">необовʼязково</span></label>
       <textarea id="f-note" class="note-input" rows="2" maxlength="300" placeholder="Навіщо мені це, як роблю, що допомагає…">${esc(v.note || '')}</textarea></div>
@@ -760,7 +759,7 @@ function openHabitSheet(h = null) {
       sheet.querySelector('[data-kind-check]').hidden = kind !== 'check';
       sheet.querySelector('[data-kind-hint]').textContent = kind === 'count'
         ? 'Вводиш, скільки зробив: 19 з 20 сторінок зарахується майже як повний день.'
-        : 'Просто відмічаєш: виконано, мінімум або ні.';
+        : 'Просто відмічаєш: зроблено або ні.';
       placeKnob(sheet);
     };
     seg.addEventListener('click', (e) => { const b = e.target.closest('[data-kind]'); if (b) { kind = b.dataset.kind; applyKind(); } });
@@ -791,7 +790,7 @@ function openHabitSheet(h = null) {
         if (minAmount > target) return bad(mEl);
         Object.assign(data, { target, minAmount, unit: sheet.querySelector('#f-unit').value.trim() });
       } else {
-        Object.assign(data, { full: sheet.querySelector('#f-full').value.trim(), min: sheet.querySelector('#f-min').value.trim() });
+        Object.assign(data, { full: sheet.querySelector('#f-full').value.trim(), min: '' });
       }
       await saveHabit(data);
       closeSheet();
@@ -1528,6 +1527,14 @@ async function ensureSleepHabits() {
     const d = SLEEP_HABITS[key];
     await saveHabit({ name: d.name, full: d.full, min: d.min, kind: 'check', perWeek: 7, note: d.note || '', askNote: false, sleep: key });
   }
+  // звички сну зʼявляються з дня старту програми
+  for (const h of S.habits.filter((x) => x.sleep)) {
+    if (S.sleepCfg && S.sleepCfg.start && h.start !== S.sleepCfg.start) {
+      Object.assign(h, { start: S.sleepCfg.start, updatedAt: Date.now(), dirty: true });
+      await db.put('habits', { ...h });
+      scheduleSync();
+    }
+  }
   const mel = sleepHabit('melatonin');
   if (mel && !(S.sleepCfg && S.sleepCfg.melatonin)) await deleteHabit(mel.id);
 }
@@ -1588,23 +1595,23 @@ function openSleepTimeSheet(h, date) {
     const verdict = () => {
       if (!isTime(inp.value)) return null;
       const late = isWake ? toMin(inp.value) - toMin(plan) : bedAbsM(inp.value) - bedAbsM(plan);
-      return late <= WAKE_GRACE ? 2 : 1;
+      return late <= WAKE_GRACE ? 2 : 0;
     };
     const paint = () => {
       const v = verdict();
       sheet.querySelector('[data-verdict]').innerHTML = v === 2 ? '<b class="ok">Вчасно</b> · зараховано повністю'
-        : v === 1 ? `Пізніше плану — зарахую як мінімум` : '';
+        : v === 0 ? `Пізніше плану — не зараховано, але час запишу` : '';
     };
     inp.addEventListener('input', paint);
     paint();
     sheet.querySelector('[data-ok]').addEventListener('click', async () => {
       const v = verdict();
-      if (!v) { inp.focus(); return; }
+      if (v == null) { inp.focus(); return; }
       await setSleepDay(logDate, { [isWake ? 'wake' : 'bed']: inp.value });
       closeSheet();
       await markSleepHabit(h, hDate, v);
       if (hDate !== date) toast('Зараховано за вчора');
-      else toast(v === 2 ? (isWake ? 'Встав вчасно' : 'Ліг вчасно') : 'Записано');
+      else toast(v === 2 ? (isWake ? 'Встав вчасно' : 'Ліг вчасно') : 'Час записано, але не вчасно');
     });
   });
 }
@@ -1621,10 +1628,7 @@ function openLightTimer(h) {
     <div class="ltimer"><svg viewBox="0 0 160 160"><circle class="track" cx="80" cy="80" r="70"/><circle class="bar" cx="80" cy="80" r="70" stroke-dasharray="${C}" stroke-dashoffset="${C}" data-lbar/></svg>
       <div class="ltime"><b data-lt>20:00</b><small data-ls>готовий</small></div></div>
     <button class="btn primary block press" data-lgo>Старт</button>
-    <div class="row-actions">
-      <button class="btn block glass press" data-lshort>Було менше</button>
-      <button class="btn block glass press" data-ldone>Вже зробив</button>
-    </div>
+    <button class="btn block glass press" data-ldone>Вже зробив</button>
   `, (sheet) => {
     const go = sheet.querySelector('[data-lgo]');
     const finish = async (v) => {
@@ -1632,7 +1636,7 @@ function openLightTimer(h) {
       try { localStorage.removeItem('lightTimer'); } catch (e) { /* ок */ }
       closeSheet();
       await markSleepHabit(h, S.today, v);
-      toast(v === 2 ? 'Світло зараховано' : 'Зараховано як мінімум');
+      toast('Світло зараховано');
     };
     const paint = () => {
       const at = lightStart();
@@ -1651,7 +1655,6 @@ function openLightTimer(h) {
       } catch (e) { /* ок */ }
       paint();
     });
-    sheet.querySelector('[data-lshort]').addEventListener('click', () => finish(1));
     sheet.querySelector('[data-ldone]').addEventListener('click', () => finish(2));
     tick = setInterval(() => { if (!sheet.isConnected) { clearInterval(tick); return; } paint(); }, 1000);
     paint();
@@ -1678,7 +1681,7 @@ function openIdeasSheet(h, date) {
         await putSleep({ id: 's-i-' + now.toString(36) + Math.random().toString(36).slice(2, 6), kind: 'idea', date, text, createdAt: now });
       }
       closeSheet();
-      if (h) await markSleepHabit(h, date, text || today.length ? 2 : 1);
+      if (h) await markSleepHabit(h, date, 2);
       else rerender();
       toast(text ? 'Ідеї збережено в «Нічні ідеї»' : 'Готово');
     });
