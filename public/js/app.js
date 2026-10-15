@@ -34,6 +34,8 @@ const S = {
   installPrompt: null,
   // планувальник
   tasks: [],
+  rules: [],          // правила повторення
+  taskIds: new Set(), // усі id завдань (і видалених) — щоб не створити видалену копію вдруге
   planMode: 'day',     // day | ahead | cal
   planDate: todayKey(),
   calOffset: 0,
@@ -52,7 +54,9 @@ async function loadState() {
   const [habits, marks, tasks, journal, sleep] = await Promise.all([db.getAll('habits'), db.getAll('marks'), db.getAll('tasks'), db.getAll('journal'), db.getAll('sleep')]);
   S.habits = habits.filter((h) => !h.deleted).sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
   S.marks = new Map(marks.map((m) => [m.k, { value: m.value, amount: m.amount ?? null, note: m.note || '', jAt: m.jAt || 0 }]));
-  S.tasks = tasks.filter((t) => !t.deleted);
+  S.taskIds = new Set(tasks.map((t) => t.id));
+  S.rules = tasks.filter((t) => !t.deleted && isRule(t));
+  S.tasks = tasks.filter((t) => !t.deleted && !isRule(t));
   S.journal = journal.filter((j) => !j.deleted);
   S.sleepCfg = sleep.find((r) => r.id === 's-cfg' && !r.deleted) || null;
   S.sleepDays = Object.fromEntries(sleep.filter((r) => r.kind === 'day' && !r.deleted).map((r) => [r.date, r]));
@@ -940,8 +944,44 @@ function syncText() {
   return 'Дані збережено на телефоні' + when;
 }
 
+/* ===== Резервна копія: усе в один файл і назад ===== */
+const BACKUP_STORES = ['habits', 'marks', 'tasks', 'journal', 'sleep'];
+async function exportBackup() {
+  const data = {};
+  for (const st of BACKUP_STORES) data[st] = (await db.getAll(st)).map(({ dirty, ...r }) => r);
+  const json = JSON.stringify({ app: 'zvychky', version: 1, exportedAt: new Date().toISOString(), data });
+  const name = `zvychky-${S.today}.json`;
+  const file = new File([json], name, { type: 'application/json' });
+  await db.setMeta('lastBackup', Date.now());
+  // на iPhone — меню «Поділитися» (Зберегти у Файли, AirDrop, Telegram…), на компʼютері — завантаження
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'Звички — резервна копія' }); return 'shared'; }
+    catch (e) { if (e && e.name === 'AbortError') return 'cancel'; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return 'downloaded';
+}
+async function importBackup(file) {
+  const parsed = JSON.parse(await file.text());
+  if (!parsed || parsed.app !== 'zvychky' || !parsed.data) throw new Error('Це не файл копії «Звичок»');
+  const now = Date.now();
+  let n = 0;
+  for (const st of BACKUP_STORES) {
+    const list = Array.isArray(parsed.data[st]) ? parsed.data[st] : [];
+    // свіжий updatedAt — щоб відновлене перемогло й на сервері, і на інших пристроях
+    await db.putMany(st, list.filter((r) => r && (r.id || r.k)).map((r) => ({ ...r, updatedAt: now, dirty: true })));
+    n += list.length;
+  }
+  return n;
+}
+
 async function openSettings() {
   const ns = await getNotifySettings();
+  const lastBackup = await db.getMeta('lastBackup', null);
   const uid = await getUserId();
   const needInstall = isIOS() && !isStandalone();
   openSheet(`
@@ -954,6 +994,12 @@ async function openSettings() {
     <div class="set-group">
       <div class="set-row"><div class="l"><b>Режим сну</b><span>${S.sleepCfg && S.sleepCfg.active ? 'Програма йде · тиждень ' + ((stageOn(S.sleepCfg, S.today) || { week: -1 }).week + 1) : '4 тижні, щоб засинати й вставати раніше'}</span></div>
         <button class="small-btn press" data-sleep-entry>${S.sleepCfg && S.sleepCfg.active ? 'Відкрити' : 'Налаштувати'}</button></div>
+    </div>
+    <div class="set-group">
+      <div class="set-row"><div class="l"><b>Резервна копія</b><span>${lastBackup ? 'Остання: ' + esc(fmtShortDM.format(new Date(lastBackup))) : 'Ще не робив'} · звички, план, щоденник, сон — в один файл</span></div>
+        <button class="small-btn press" data-backup>Зберегти</button></div>
+      <div class="set-row"><div class="l"><b>Відновити з файлу</b><span>Записи з файлу замінять ті самі записи тут</span></div>
+        <label class="small-btn press" style="display:inline-flex;align-items:center">Вибрати<input type="file" accept="application/json,.json" data-restore hidden></label></div>
     </div>
     <div class="set-group">
       <div class="set-row"><div class="l"><b>Синхронізація</b><span data-sync-text>${esc(syncText())}</span></div>
@@ -979,6 +1025,22 @@ async function openSettings() {
     });
     sheet.querySelector('[data-sleep-entry]').addEventListener('click', () => {
       if (S.sleepCfg && S.sleepCfg.active) { closeSheet(); showTab('sleep'); } else openSleepSetup();
+    });
+    sheet.querySelector('[data-backup]').addEventListener('click', async () => {
+      try { const r = await exportBackup(); if (r !== 'cancel') toast(r === 'shared' ? 'Копію створено' : 'Файл копії завантажено'); }
+      catch (e) { toast('Не вдалося створити копію'); }
+    });
+    sheet.querySelector('[data-restore]').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      if (!confirm('Відновити дані з «' + f.name + '»?')) { e.target.value = ''; return; }
+      try {
+        const n = await importBackup(f);
+        await loadState(); await generateInstances();
+        closeSheet(); toast(`Відновлено записів: ${n}`);
+        rerenderAnimated(); scheduleSync(300);
+      } catch (err) { toast(err.message || 'Файл не підходить'); }
+      e.target.value = '';
     });
     sheet.querySelector('[data-sync-now]').addEventListener('click', () => syncNow({ onMerged: onServerMerge }));
     sheet.querySelector('[data-copy]').addEventListener('click', async () => {
@@ -1054,6 +1116,7 @@ const ICAL = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" wi
 const IBELL = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
 const INOTE = '<svg class="i-note" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>';
 const ISUN = '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const IREPEAT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>';
 const ICLOCK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 const relDay = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.today, 1) ? 'Завтра' : d === addDays(S.today, -1) ? 'Вчора' : cap(fmtWeekday.format(parseKey(d))));
@@ -1061,7 +1124,7 @@ const onDay = (d) => (d === S.today ? 'на сьогодні' : d === addDays(S.
 const chipDay = (d) => (d === S.today ? 'Сьогодні' : d === addDays(S.today, 1) ? 'Завтра' : `${WD_SHORT[parseKey(d).getDay()]}, ${parseKey(d).getDate()}`);
 const tasksOn = (d) => S.tasks.filter((t) => t.date === d);
 // Невиконане з минулих днів автоматично показується в «Сьогодні» як «Перенесено»
-const carriedTasks = () => S.tasks.filter((t) => t.date < S.today && !t.done).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
+const carriedTasks = () => S.tasks.filter((t) => t.date < S.today && !t.done && !t.rule).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.order - b.order));
 const timeRange = (t) => (t.time ? t.time + (t.endTime ? '–' + t.endTime : '') : '');
 // коли нагадати: точний час; старі завдання без remindAt — за 15 хв до початку
 const remindAtOf = (t) => (!t.remind ? '' : t.remindAt || (t.time ? minusMin(t.time, 15) : ''));
@@ -1075,6 +1138,74 @@ function dayState(d) {
   // важливе (Appointment, подія) — червона крапка; минулі виконані важливі вже не горять
   const imp = l.some((t) => t.important && (!t.done || d >= S.today));
   return { total: l.length, open, imp, cls: imp ? 'imp' : !open ? 'done' : d < S.today ? 'late' : 'open' };
+}
+
+/* ===== Повторювані завдання =====
+   Правило (repeat = дні тижня) зберігається окремо, а на кожен день створюється звичайна копія
+   з передбачуваним id (правило + дата) — тому два пристрої не створять дублікатів. */
+function isRule(t) { return Array.isArray(t.repeat) && t.repeat.length > 0; }
+const RULE_AHEAD = 30; // на скільки днів уперед створювати копії (сервер нагадує саме про них)
+const instId = (ruleId, d) => ruleId + 'r' + d.replace(/-/g, '');
+const RULE_FIELDS = ['title', 'time', 'endTime', 'remind', 'remindAt', 'note', 'askNote', 'important'];
+const pickRule = (o) => Object.fromEntries(RULE_FIELDS.map((k) => [k, o[k]]));
+const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+function repeatLabel(days) {
+  const d = [...days].sort();
+  if (d.length === 7) return 'щодня';
+  if (d.join() === '1,2,3,4,5') return 'по буднях';
+  if (d.join() === '0,6') return 'на вихідних';
+  return 'щотижня: ' + WD_ORDER.filter((x) => d.includes(x)).map((x) => WD_SHORT[x].toLowerCase()).join(', ');
+}
+async function generateInstances() {
+  const end = addDays(S.today, RULE_AHEAD);
+  const recs = [];
+  for (const r of S.rules) {
+    for (let d = r.date > S.today ? r.date : S.today; d <= end; d = addDays(d, 1)) {
+      if (r.until && d > r.until) break;
+      if (!r.repeat.includes(parseKey(d).getDay())) continue;
+      const id = instId(r.id, d);
+      if (S.taskIds.has(id)) continue;
+      // updatedAt: 1 — «найстаріший», тож будь-яка справжня зміна чи видалення з іншого пристрою переможе
+      const t = { id, ...pickRule(r), date: d, done: false, doneNote: '', jAt: 0, rule: r.id, repeat: [],
+        order: r.order || 0, createdAt: Date.now(), updatedAt: 1, deleted: false, dirty: true };
+      recs.push(t); S.tasks.push(t); S.taskIds.add(id);
+    }
+  }
+  if (recs.length) { await db.putMany('tasks', recs.map((t) => ({ ...t }))); scheduleSync(); }
+}
+async function putRule(r) {
+  Object.assign(r, { updatedAt: Date.now(), dirty: true });
+  await db.put('tasks', { ...r });
+  S.taskIds.add(r.id);
+  if (r.deleted) S.rules = S.rules.filter((x) => x.id !== r.id);
+  else if (!S.rules.includes(r)) S.rules.push(r);
+  scheduleSync();
+}
+async function createRule(fields) {
+  const now = Date.now();
+  const maxOrder = S.tasks.concat(S.rules).reduce((m, x) => Math.max(m, x.order || 0), 0);
+  const r = { id: 't-' + now.toString(36) + Math.random().toString(36).slice(2, 7), ...fields, done: false, doneNote: '', jAt: 0,
+    rule: '', until: '', order: maxOrder + 1, createdAt: now, createdOn: S.today, deleted: false };
+  await putRule(r);
+  await generateInstances();
+  return r;
+}
+// Змінити серію: правило + усі невиконані копії від дати from
+async function updateRule(rule, fields, from, exceptId) {
+  Object.assign(rule, fields);
+  if (rule.date > from) rule.date = from;
+  await putRule(rule);
+  for (const t of S.tasks.filter((x) => x.rule === rule.id && x.date >= from && !x.done && x.id !== exceptId)) {
+    if (!rule.repeat.includes(parseKey(t.date).getDay())) await patchTask(t.id, { deleted: true });
+    else await patchTask(t.id, pickRule(rule));
+  }
+  await generateInstances();
+}
+// Зупинити серію: копії від дати from видаляються, правило — теж
+async function endRule(rule, from, keepId) {
+  for (const t of S.tasks.filter((x) => x.rule === rule.id && x.date >= from && !x.done && x.id !== keepId)) await patchTask(t.id, { deleted: true });
+  rule.deleted = true;
+  await putRule(rule);
 }
 
 async function saveTask(data) {
@@ -1132,7 +1263,7 @@ function taskRow(t, i, { carried = false, compact = false } = {}) {
   return `<div class="task${compact ? ' compact' : ' glass'}${t.important ? ' imp' : ''}${t.done ? ' done' : ''}${carried ? ' late' : ''}${now ? ' now' : ''}" data-task="${t.id}" style="--i:${i}">
     <button class="tcheck" data-act="task-toggle" data-id="${t.id}" aria-label="${t.done ? 'Зняти позначку' : 'Виконано'}: ${esc(t.title)}">${I.check}</button>
     <button class="tbody" data-act="task-edit" data-id="${t.id}" aria-label="Змінити: ${esc(t.title)}">
-      <span class="tt">${t.important ? '<i class="impdot" aria-label="Важливе"></i>' : ''}${esc(t.title)}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
+      <span class="tt">${t.important ? '<i class="impdot" aria-label="Важливе"></i>' : ''}${esc(t.title)}${t.rule ? `<i class="trep" aria-label="Повторюється">${IREPEAT}</i>` : ''}</span>${sub ? `<span class="tm${meta ? '' : ' soft'}">${esc(sub)}</span>` : ''}
       ${noteLine(t, compact)}
     </button>
     ${t.askNote ? `<button class="tnote${t.doneNote ? ' has' : ''}" data-act="task-note" data-id="${t.id}" aria-label="Нотатка: ${esc(t.title)}">${INOTE}</button>` : ''}
@@ -1186,11 +1317,13 @@ function renderPlanDay(el) {
 
 function renderPlanAhead(el) {
   const carried = carriedTasks();
-  const dates = [...new Set(S.tasks.filter((t) => t.date >= S.today).map((t) => t.date))].sort();
+  // повторювані показуємо лише на тиждень уперед, щоб щоденні не заполонили список
+  const weekEnd = addDays(S.today, 6);
+  const dates = [...new Set(S.tasks.filter((t) => t.date >= S.today && (!t.rule || t.date <= weekEnd)).map((t) => t.date))].sort();
   if (carried.length && !dates.includes(S.today)) dates.unshift(S.today);
   let i = 0;
   const groups = dates.slice(0, 40).map((d, gi) => {
-    const items = (d === S.today ? carried : []).concat(tasksOn(d).sort(byTime));
+    const items = (d === S.today ? carried : []).concat(tasksOn(d).filter((t) => !t.rule || d <= weekEnd).sort(byTime));
     const open = items.filter((t) => !t.done).length;
     const sub = d === S.today || d === addDays(S.today, 1) ? fmtWdShortDate.format(parseKey(d)) : fmtDayMonth.format(parseKey(d));
     return `<div class="tgroup glass" style="--i:${gi}">
@@ -1285,6 +1418,17 @@ function openTaskSheet(task = null, date = S.today) {
   let calOff = Math.max(0, monthOff(sel));
   const nextMon = addDays(S.today, 7 - ((t0.getDay() + 6) % 7));
   const chipDates = [...new Set([S.today, addDays(S.today, 1), addDays(S.today, 2), nextMon])];
+  const rule = task && task.rule ? S.rules.find((r) => r.id === task.rule) : null;
+  let rep = rule ? [...rule.repeat] : [];
+  const repMode = () => {
+    const d = [...rep].sort().join();
+    if (!rep.length) return 'none';
+    if (rep.length === 7) return 'daily';
+    if (d === '1,2,3,4,5') return 'weekdays';
+    if (rep.length === 1 && rep[0] === parseKey(sel).getDay()) return 'weekly';
+    return 'custom';
+  };
+  let repCustom = repMode() === 'custom';
 
   openSheet(`
     <h2>${task ? 'Змінити завдання' : 'Нове завдання'}</h2>
@@ -1293,6 +1437,7 @@ function openTaskSheet(task = null, date = S.today) {
     <div class="field"><label>Коли</label><div class="dchips" data-chips></div></div>
     <div class="mcal" data-cal></div>
     <div class="field"><label>Час</label><div class="timerow" data-timerow></div><small class="warn" data-timehint></small></div>
+    <div class="field"><label>${IREPEAT}Повторювати</label><div class="dchips" data-repchips></div><div class="wdpick" data-wdpick></div><small data-rephint></small></div>
     <div class="field"><label>${IBELL}Нагадування</label><div class="dchips rem" data-remchips></div><div class="remcustom" data-remcustom></div><small data-remhint></small></div>
     <div class="field"><label for="t-note">${INOTE}Нотатка <span class="opt">необовʼязково</span></label>
       <textarea id="t-note" class="note-input" rows="2" maxlength="500" placeholder="Деталі, адреса, що взяти з собою…">${esc(task?.note || '')}</textarea></div>
@@ -1314,7 +1459,18 @@ function openTaskSheet(task = null, date = S.today) {
     sheet.querySelector('[data-open-result]')?.addEventListener('click', () => openTaskNoteSheet(task));
     // Перемальовуємо частинами: поля часу НЕ чіпаємо, поки людина в них друкує,
     // інакше на компʼютері курсор вилітає з поля після першої цифри.
-    const paint = () => { paintDates(); paintTime(); paintRem(true); };
+    const paint = () => { paintDates(); paintTime(); paintRem(true); paintRep(); };
+    const paintRep = () => {
+      const m = repCustom ? 'custom' : repMode();
+      const wd = WD_SHORT[parseKey(sel).getDay()].toLowerCase();
+      sheet.querySelector('[data-repchips]').innerHTML = [['none', 'Ні'], ['daily', 'Щодня'], ['weekdays', 'Будні'], ['weekly', 'Щотижня (' + wd + ')'], ['custom', 'Свої дні']]
+        .map(([k, l]) => `<button type="button" class="chip glass${m === k ? ' on' : ''}" data-rep="${k}" aria-pressed="${m === k}">${l}</button>`).join('');
+      sheet.querySelector('[data-wdpick]').innerHTML = m === 'custom' ? WD_ORDER.map((d) =>
+        `<button type="button" class="wd${rep.includes(d) ? ' on' : ''}" data-wd="${d}" aria-pressed="${rep.includes(d)}">${WD_SHORT[d]}</button>`).join('') : '';
+      sheet.querySelector('[data-rephint]').textContent = !rep.length ? '' : task && task.rule
+        ? `Повторюється ${repeatLabel(rep)}. Зміни застосуються до цього й наступних разів.`
+        : `Повторюватиметься ${repeatLabel(rep)}, починаючи з ${sel === S.today ? 'сьогодні' : fmtDayMonth.format(parseKey(sel))}.`;
+    };
     const paintDates = () => {
       sheet.querySelector('[data-chips]').innerHTML = chipDates.map((d) =>
         `<button type="button" class="chip glass${d === sel ? ' on' : ''}" data-pick="${d}" aria-pressed="${d === sel}">${chipDay(d)}</button>`).join('');
@@ -1366,7 +1522,26 @@ function openTaskSheet(task = null, date = S.today) {
     };
     sheet.addEventListener('click', (e) => {
       const p = e.target.closest('[data-pick]');
-      if (p && !p.disabled) { sel = p.dataset.pick; calOff = Math.max(0, monthOff(sel)); paint(); return; }
+      if (p && !p.disabled) {
+        const was = repMode();
+        sel = p.dataset.pick; calOff = Math.max(0, monthOff(sel));
+        if (was === 'weekly' && !repCustom) rep = [parseKey(sel).getDay()];
+        paint(); return;
+      }
+      const rp = e.target.closest('[data-rep]');
+      if (rp) {
+        const k = rp.dataset.rep;
+        repCustom = k === 'custom';
+        rep = k === 'none' ? [] : k === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : k === 'weekdays' ? [1, 2, 3, 4, 5] : k === 'weekly' ? [parseKey(sel).getDay()] : rep.length ? rep : [parseKey(sel).getDay()];
+        paintRep(); return;
+      }
+      const wdb = e.target.closest('[data-wd]');
+      if (wdb) {
+        const d = Number(wdb.dataset.wd);
+        rep = rep.includes(d) ? rep.filter((x) => x !== d) : rep.concat(d);
+        if (!rep.length) repCustom = false;
+        paintRep(); return;
+      }
       const cd = e.target.closest('[data-cal-d]');
       if (cd && !cd.disabled) { calOff = Math.max(0, calOff + Number(cd.dataset.calD)); paint(); return; }
       if (e.target.closest('[data-add-time]')) { time = '09:00'; paint(); return; }
@@ -1403,11 +1578,30 @@ function openTaskSheet(task = null, date = S.today) {
       if (!txt) { title.focus(); title.style.borderColor = '#FF8A80'; return; }
       if (time && endTime && endTime <= time) { toast('Кінець має бути пізніше за початок'); return; }
       const rt = remindTime();
-      const saved = await saveTask({ id: task?.id, title: txt, date: sel, time, endTime, remind: !!rt, remindAt: rt,
-        note: sheet.querySelector('#t-note').value.trim(), askNote: ask.getAttribute('aria-checked') === 'true',
-        important: imp.getAttribute('aria-checked') === 'true' });
+      const fields = { title: txt, time, endTime: time && endTime > time ? endTime : '', remind: !!rt, remindAt: rt,
+        note: sheet.querySelector('#t-note').value.trim().slice(0, 500), askNote: ask.getAttribute('aria-checked') === 'true',
+        important: imp.getAttribute('aria-checked') === 'true' };
+      const days = [...new Set(rep)].sort();
+      let saved, msg;
+      if (days.length && !task) {
+        // нова серія
+        await createRule({ ...fields, date: sel, repeat: days });
+        saved = { ...fields, date: sel }; msg = 'Повторюватиметься ' + repeatLabel(days);
+      } else if (task && task.rule && rule) {
+        saved = await saveTask({ id: task.id, ...fields, date: sel });
+        if (days.length) { await updateRule(rule, { ...fields, repeat: days }, task.date, task.id); msg = 'Збережено для цього й наступних'; }
+        else { await patchTask(task.id, { rule: '' }); await endRule(rule, task.date, task.id); msg = 'Більше не повторюється'; }
+      } else if (days.length && task) {
+        // звичайне завдання стає серією: сама серія замінює його
+        await patchTask(task.id, { deleted: true });
+        await createRule({ ...fields, date: sel, repeat: days });
+        saved = { ...fields, date: sel }; msg = 'Повторюватиметься ' + repeatLabel(days);
+      } else {
+        saved = await saveTask({ id: task?.id, ...fields, date: sel });
+        msg = task ? 'Збережено' : `Додано ${onDay(saved.date)}`;
+      }
       closeSheet();
-      toast(task ? 'Збережено' : `Додано ${onDay(saved.date)}`);
+      toast(msg);
       if (saved.remind) ensureTaskPush().catch((e) => toast(e.message || 'Сповіщення не ввімкнено'));
       rerenderAnimated();
     });
@@ -1423,6 +1617,17 @@ function openTaskSheet(task = null, date = S.today) {
     if (del) {
       let armed = false;
       del.addEventListener('click', async () => {
+        if (task.rule && rule) {
+          // серія: тільки цей раз або цей і всі наступні
+          del.closest('.row-actions').outerHTML = `<div class="row-actions"><button class="btn block glass press" data-del-one>Тільки цей раз</button><button class="btn danger block press" data-del-all>Цей і наступні</button></div>`;
+          sheet.querySelector('[data-del-one]').addEventListener('click', async () => {
+            await patchTask(task.id, { deleted: true }); closeSheet(); toast('Видалено цей раз'); rerenderAnimated();
+          });
+          sheet.querySelector('[data-del-all]').addEventListener('click', async () => {
+            await patchTask(task.id, { deleted: true }); await endRule(rule, task.date); closeSheet(); toast('Серію зупинено'); rerenderAnimated();
+          });
+          return;
+        }
         if (!armed) { armed = true; del.textContent = 'Точно видалити?'; return; }
         await patchTask(task.id, { deleted: true });
         closeSheet();
@@ -2308,12 +2513,12 @@ document.addEventListener('visibilitychange', () => {
     if (S.selDate === S.today) S.selDate = now;
     if (S.planDate === S.today) S.planDate = now;
     S.today = now;
-    rerenderAnimated();
+    generateInstances().then(rerenderAnimated);
   }
 });
 
 function onServerMerge() {
-  loadState().then(() => rerender());
+  loadState().then(generateInstances).then(() => rerender());
 }
 
 onSyncStatus((s) => {
@@ -2336,6 +2541,7 @@ async function start() {
   }
   requestPersistence();
   await loadState();
+  await generateInstances();
   const want = new URLSearchParams(location.search).get('tab');
   showTab(TABS.includes(want) ? want : 'today');
   initSync(onServerMerge);

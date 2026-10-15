@@ -883,3 +883,11 @@ small.warn:empty { display: none; }
 .ltime b { font-family: var(--round); font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .ltime small { font-size: 13px; color: var(--muted); font-weight: 700; }
 @media (min-width: 768px) { .view[data-view="sleep"] .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); } }
+
+/* ===== Повторювані завдання ===== */
+.trep { display: inline-flex; vertical-align: -2px; margin-left: 6px; opacity: .55; }
+.trep svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.wdpick { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; }
+.wdpick:empty { display: none; }
+.wdpick .wd { min-height: 40px; border-radius: 14px; font-size: 13px; font-weight: 800; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); color: rgba(242,244,247,.75); transition: background .2s; }
+.wdpick .wd.on { background: var(--lime); color: #0B0D10; border-color: transparent; }

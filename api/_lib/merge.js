@@ -65,6 +65,10 @@ export function cleanTask(t) {
     note: str(t.note, 500),
     askNote: !!t.askNote,
     important: !!t.important,
+    // повторення: правило (repeat = дні тижня 0–6, 0 = неділя) і його копії на конкретні дні (rule = id правила)
+    repeat: Array.isArray(t.repeat) ? [...new Set(t.repeat.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() : [],
+    until: DATE_RE.test(t.until || '') ? t.until : '',
+    rule: TASK_RE.test(t.rule || '') ? t.rule : '',
     doneNote: str(t.doneNote, 500),
     jAt: num(t.jAt), // >0 — нотатка «як пройшло» додана в щоденник
     order: num(t.order),

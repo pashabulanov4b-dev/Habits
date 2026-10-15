@@ -195,3 +195,13 @@ test('режим сну: очищення записів', () => {
   assert.equal(cleanSleep({ id: 's-x' }), null);
   assert.equal(cleanSleep({ id: 's-i-abcd12', text: 'ідея', date: '2026-10-13' }).text, 'ідея');
 });
+
+test('повторювані завдання: правило і копії', () => {
+  const r = cleanTask({ id: 't-rule123', title: 'Спортзал', date: '2026-10-16', time: '18:00', remind: true, remindAt: '17:45', repeat: [1, 3, 3, 9, 5] });
+  assert.deepEqual(r.repeat, [1, 3, 5]);
+  const c = cleanTask({ id: 't-rule123r20261016', date: '2026-10-16', rule: 't-rule123', time: '18:00', remind: true, remindAt: '17:45' });
+  assert.equal(c.rule, 't-rule123');
+  const at = { date: '2026-10-16', minutes: 17 * 60 + 46 };
+  // нагадує тільки копія, не саме правило
+  assert.deepEqual(dueTasks({ a: r, b: c }, at).map((t) => t.id), ['t-rule123r20261016']);
+});

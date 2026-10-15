@@ -48,6 +48,7 @@ export function remindAtOf(t) {
 export function dueTasks(tasksAll, local, sent = {}) {
   return Object.values(tasksAll || {}).map(parse).filter((t) => {
     if (!t || t.deleted || t.done || t.date !== local.date) return false;
+    if (t.repeat && t.repeat.length) return false; // правило повторення — нагадують його копії на дні
     const at = remindAtOf(t);
     if (!at || sent[t.id] === t.date + ' ' + at) return false;
     const diff = local.minutes - toMin(at);
