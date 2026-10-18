@@ -1074,3 +1074,10 @@ small.warn:empty { display: none; }
 @media (max-width: 767px) { .tab { font-size: 11px; } }
 @media (max-width: 359px) { .tab { font-size: 10px; } }
 @media (max-width: 767px) { .view[data-view="plan"] { padding-bottom: calc(var(--safe-bottom) + 200px); } }
+
+/* гортання тижнів на «Звичках» */
+.wknav { display: flex; align-items: center; justify-content: space-between; margin-bottom: -8px; }
+.wknav span { font-size: 13.5px; font-weight: 700; color: rgba(242,244,247,.6); }
+.wknav .icon-btn { width: 34px; height: 34px; background: none; border: 0; }
+.wknav .icon-btn[disabled] { opacity: .2; }
+.week { touch-action: pan-y; }

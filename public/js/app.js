@@ -289,6 +289,27 @@ function rerender() {
   el.scrollTop = top;
 }
 
+// Гортання тижнів на екрані «Звички»: той самий день тижня, але не пізніше сьогодні
+function weekNav(dir) {
+  const next = addDays(S.selDate, dir * 7);
+  if (dir < 0 && weekStart(next) < weekStart(earliestStart())) return;
+  if (dir > 0 && weekStart(next) > weekStart(S.today)) return;
+  S.selDate = next > S.today ? S.today : next;
+  rerenderAnimated();
+}
+// свайп по смужці днів — теж гортає тижні
+let wkTouch = null;
+document.addEventListener('touchstart', (e) => {
+  const w = e.target.closest('[data-week]');
+  wkTouch = w ? [e.touches[0].clientX, e.touches[0].clientY] : null;
+}, { passive: true });
+document.addEventListener('touchend', (e) => {
+  if (!wkTouch) return;
+  const dx = e.changedTouches[0].clientX - wkTouch[0], dy = e.changedTouches[0].clientY - wkTouch[1];
+  wkTouch = null;
+  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 300); weekNav(dx < 0 ? 1 : -1); }
+}, { passive: true });
+
 /* ================= Спільні частини: шапка й перемикач ================= */
 // Одна шапка для всіх екранів: дрібний підпис, великий заголовок зліва, кнопки справа
 function headHTML({ eyebrow, title, actions = '', back = '', dot = true }) {
@@ -390,7 +411,12 @@ function renderToday(el) {
   const yest = addDays(S.today, -1);
   const title = isToday ? 'Сьогодні' : date === yest ? 'Вчора' : cap(new Intl.DateTimeFormat('uk', { weekday: 'long' }).format(parseKey(date)));
   const t = parseKey(S.today);
-  const monday = addDays(S.today, -((t.getDay() + 6) % 7));
+  // тиждень вибраного дня — можна гортати назад і відмічати звички заднім числом
+  const monday = weekStart(date);
+  const curMonday = weekStart(S.today);
+  const wkLabel = monday === curMonday ? 'Цей тиждень' : monday === addDays(curMonday, -7) ? 'Минулий тиждень'
+    : `${parseKey(monday).getDate()} – ${fmtShortDM.format(parseKey(addDays(monday, 6)))}`;
+  const canPrev = monday > weekStart(earliestStart());
   const week = [];
   for (let i = 0; i < 7; i++) {
     const d = addDays(monday, i);
@@ -429,7 +455,12 @@ function renderToday(el) {
     ${install}
     <div class="cols">
     <div class="col sticky">
-    <div class="week">${week.join('')}</div>
+    <div class="wknav">
+      <button class="icon-btn small press" data-act="week-nav" data-d="-1" aria-label="Попередній тиждень" ${canPrev ? '' : 'disabled'}>${I.left}</button>
+      <span>${esc(wkLabel)}</span>
+      <button class="icon-btn small press" data-act="week-nav" data-d="1" aria-label="Наступний тиждень" ${monday >= curMonday ? 'disabled' : ''}>${I.right}</button>
+    </div>
+    <div class="week" data-week>${week.join('')}</div>
     <div class="progress-card glass${sum.total && sum.counted === sum.total ? ' done' : ''}" data-progress>
       <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-ring/></svg>
         <div class="val"><div><b data-pct>0%</b></div></div></div>
@@ -2417,7 +2448,10 @@ views.addEventListener('click', async (e) => {
   } else if (act === 'habit-note') {
     const hb = habitById(t.dataset.id);
     if (hb) openNoteSheet(hb, S.selDate);
+  } else if (act === 'week-nav') {
+    weekNav(Number(t.dataset.d));
   } else if (act === 'day') {
+    if (suppressClick) return;
     S.selDate = t.dataset.date;
     rerenderAnimated();
   } else if (act === 'add') {
