@@ -289,26 +289,30 @@ function rerender() {
   el.scrollTop = top;
 }
 
-// Гортання тижнів на екрані «Звички»: той самий день тижня, але не пізніше сьогодні
-function weekNav(dir) {
-  const next = addDays(S.selDate, dir * 7);
-  if (dir < 0 && weekStart(next) < weekStart(earliestStart())) return;
-  if (dir > 0 && weekStart(next) > weekStart(S.today)) return;
-  S.selDate = next > S.today ? S.today : next;
-  rerenderAnimated();
+// Гортання тижнів на «Звичках»: смужка днів прокручується пальцем зі «снепом» по тижнях.
+// Коли сторінка зупинилась — вибираємо той самий день тижня (але не пізніше сьогодні).
+function setupWeekPager(el) {
+  const pager = el.querySelector('[data-week]');
+  if (!pager) return;
+  const idx = Number(pager.dataset.idx);
+  pager.scrollLeft = idx * pager.clientWidth;
+  let t = null;
+  const settle = () => {
+    const page = Math.round(pager.scrollLeft / Math.max(1, pager.clientWidth));
+    if (page === idx || !pager.isConnected) return;
+    const mon = pager.children[page].dataset.mon;
+    const wd = (parseKey(S.selDate).getDay() + 6) % 7;
+    let next = addDays(mon, wd);
+    if (next > S.today) next = S.today;
+    S.selDate = next;
+    rerender();
+  };
+  pager.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(settle, 140); }, { passive: true });
 }
-// свайп по смужці днів — теж гортає тижні
-let wkTouch = null;
-document.addEventListener('touchstart', (e) => {
-  const w = e.target.closest('[data-week]');
-  wkTouch = w ? [e.touches[0].clientX, e.touches[0].clientY] : null;
-}, { passive: true });
-document.addEventListener('touchend', (e) => {
-  if (!wkTouch) return;
-  const dx = e.changedTouches[0].clientX - wkTouch[0], dy = e.changedTouches[0].clientY - wkTouch[1];
-  wkTouch = null;
-  if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 300); weekNav(dx < 0 ? 1 : -1); }
-}, { passive: true });
+function weekNav(dir) {
+  const pager = currentView()?.querySelector('[data-week]');
+  if (pager) pager.scrollBy({ left: dir * pager.clientWidth, behavior: reduceMotion() ? 'auto' : 'smooth' });
+}
 
 /* ================= Спільні частини: шапка й перемикач ================= */
 // Одна шапка для всіх екранів: дрібний підпис, великий заголовок зліва, кнопки справа
@@ -417,14 +421,24 @@ function renderToday(el) {
   const wkLabel = monday === curMonday ? 'Цей тиждень' : monday === addDays(curMonday, -7) ? 'Минулий тиждень'
     : `${parseKey(monday).getDate()} – ${fmtShortDM.format(parseKey(addDays(monday, 6)))}`;
   const canPrev = monday > weekStart(earliestStart());
-  const week = [];
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(monday, i);
-    const sc = dayScore(d);
-    week.push(`<button class="day${d === date ? ' sel' : ''}${d > S.today ? ' future' : ''}" data-act="day" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}">
-      <span class="wd">${WD_SHORT[parseKey(d).getDay()]}</span><span class="dn">${parseKey(d).getDate()}</span>
-      <span class="mini"><i style="width:${Math.round((sc || 0) * 100)}%"></i></span></button>`);
-  }
+  // смужка днів — гортається пальцем: кожна сторінка = тиждень (до півроку назад)
+  const oldest = weekStart(earliestStart()), limit = addDays(curMonday, -7 * 25);
+  let firstMon = oldest > limit ? oldest : limit;
+  if (monday < firstMon) firstMon = monday;
+  const mondays = [];
+  for (let m = firstMon; m <= curMonday; m = addDays(m, 7)) mondays.push(m);
+  const pageIdx = mondays.indexOf(monday);
+  const week = mondays.map((mon) => {
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(mon, i);
+      const sc = d <= S.today ? dayScore(d) : 0;
+      days.push(`<button class="day${d === date ? ' sel' : ''}${d > S.today ? ' future' : ''}" data-act="day" data-date="${d}" aria-label="${esc(fmtLong.format(parseKey(d)))}">
+        <span class="wd">${WD_SHORT[parseKey(d).getDay()]}</span><span class="dn">${parseKey(d).getDate()}</span>
+        <span class="mini"><i style="width:${Math.round((sc || 0) * 100)}%"></i></span></button>`);
+    }
+    return `<div class="wkpage" data-mon="${mon}">${days.join('')}</div>`;
+  });
   const sum = todaySummary();
   const hs = activeOn(date);
 
@@ -460,7 +474,7 @@ function renderToday(el) {
       <span>${esc(wkLabel)}</span>
       <button class="icon-btn small press" data-act="week-nav" data-d="1" aria-label="Наступний тиждень" ${monday >= curMonday ? 'disabled' : ''}>${I.right}</button>
     </div>
-    <div class="week" data-week>${week.join('')}</div>
+    <div class="wkpager" data-week data-idx="${pageIdx}">${week.join('')}</div>
     <div class="progress-card glass${sum.total && sum.counted === sum.total ? ' done' : ''}" data-progress>
       <div class="ring"><svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="bar" cx="60" cy="60" r="52" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}" data-ring/></svg>
         <div class="val"><div><b data-pct>0%</b></div></div></div>
@@ -471,6 +485,7 @@ function renderToday(el) {
     <div class="col">${list}</div>
     </div>`;
 
+  setupWeekPager(el);
   requestAnimationFrame(() => requestAnimationFrame(() => {
     const ring = el.querySelector('[data-ring]');
     if (ring) ring.style.strokeDashoffset = RING_C * (1 - sum.frac);

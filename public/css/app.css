@@ -1076,8 +1076,14 @@ small.warn:empty { display: none; }
 @media (max-width: 767px) { .view[data-view="plan"] { padding-bottom: calc(var(--safe-bottom) + 200px); } }
 
 /* гортання тижнів на «Звичках» */
-.wknav { display: flex; align-items: center; justify-content: space-between; margin-bottom: -8px; }
-.wknav span { font-size: 13.5px; font-weight: 700; color: rgba(242,244,247,.6); }
-.wknav .icon-btn { width: 34px; height: 34px; background: none; border: 0; }
-.wknav .icon-btn[disabled] { opacity: .2; }
-.week { touch-action: pan-y; }
+.wkpager { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.wkpager::-webkit-scrollbar { display: none; }
+.wkpage { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+/* стрілки й підпис тижня — лише там, де є миша (на телефоні гортаємо пальцем) */
+.wknav { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .wknav { display: flex; align-items: center; justify-content: space-between; margin-bottom: -8px; }
+  .wknav span { font-size: 13.5px; font-weight: 700; color: rgba(242,244,247,.6); }
+  .wknav .icon-btn { width: 34px; height: 34px; background: none; border: 0; }
+  .wknav .icon-btn[disabled] { opacity: .2; }
+}
