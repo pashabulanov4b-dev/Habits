@@ -1089,3 +1089,11 @@ small.warn:empty { display: none; }
 }
 /* елементи екрана не стискаються, коли список довгий (інакше смужка з прокруткою зникає) */
 .view > *, .view .col > *, .wkpager { flex-shrink: 0; }
+
+/* anime.js: частинки сплеску, керовані з js/motion.js */
+.mdot { position: absolute; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; will-change: transform, opacity; }
+.mring { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; border: 2px solid; will-change: transform, opacity; }
+.spark { margin: -4px 0 0 -4px; }
+.pg-tr i { animation: none; }
+.day .mini i { transform-origin: left; }
+.tab svg { will-change: transform; }

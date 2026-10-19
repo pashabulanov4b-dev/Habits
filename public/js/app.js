@@ -2,6 +2,7 @@ import { db, requestPersistence } from './db.js';
 import { initSync, scheduleSync, syncNow, onSyncStatus, getUserId, adoptUserId } from './sync.js';
 import { isIOS, isStandalone, getNotifySettings, setDaily, updateTime, ensureTaskPush } from './notify.js';
 import { openIntro, maybeShowIntro } from './intro.js';
+import * as M from './motion.js';
 import { stagesOf, stageOn, planOn, sleepMinutes, NOTIFS, SLEEP_DEFAULTS, toMin, fromMin, isTime, WAKE_GRACE, STAGES } from './sleepcore.js';
 
 /* ================= Дати ================= */
@@ -306,6 +307,9 @@ function setupWeekPager(el) {
     if (next > S.today) next = S.today;
     S.selDate = next;
     rerender();
+    const pg = currentView()?.querySelector('[data-week]');
+    const shown = pg && pg.children[Number(pg.dataset.idx)];
+    if (shown) M.fillMinis(shown.querySelectorAll('.mini i'));
   };
   pager.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(settle, 140); }, { passive: true });
 }
@@ -522,20 +526,7 @@ function updateTodayDynamic(row) {
   return sum;
 }
 
-function countTo(el, to, suffix = '') {
-  if (!el) return;
-  const from = parseInt(el.textContent, 10) || 0;
-  if (reduceMotion() || from === to) { el.textContent = to + suffix; return; }
-  const t0 = performance.now();
-  const dur = 700;
-  const step = (t) => {
-    const p = Math.min(1, (t - t0) / dur);
-    const e = 1 - Math.pow(1 - p, 3);
-    el.textContent = Math.round(from + (to - from) * e) + suffix;
-    if (p < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
+function countTo(el, to, suffix = '') { M.countTo(el, to, suffix); }
 
 /* ================= Екран «Таблиця» ================= */
 function monthInfo() {
@@ -702,6 +693,7 @@ function renderStats(el) {
     </div>
     </div>`;
 
+  M.growBars(el.querySelectorAll('.pg-tr i'));
   requestAnimationFrame(() => {
     countTo(el.querySelector('[data-total]'), Math.round((cur || 0) * 100), '%');
   });
@@ -745,6 +737,7 @@ function openSheet(html, onMount) {
   sheetRoot.appendChild(wrap);
   wrap.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
   if (onMount) onMount(wrap.querySelector('.sheet'));
+  M.cascade(wrap.querySelectorAll('.sheet > :not(.grabber):not([hidden])'), { y: 14, step: 22, start: 70 });
   return wrap;
 }
 sheetRoot.addEventListener('click', (e) => {
@@ -1117,28 +1110,7 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
 }
-function confetti(fromEl) {
-  if (reduceMotion()) return;
-  const fx = document.getElementById('fx');
-  const r = fromEl ? fromEl.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 3, width: 0, height: 0 };
-  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-  const colors = ['#D4F57A', '#F2F4F7', '#8B74FF', '#3FD6C6', '#E8FFB0'];
-  for (let i = 0; i < 46; i++) {
-    const s = document.createElement('i');
-    s.className = 'spark';
-    s.style.left = cx + 'px'; s.style.top = cy + 'px';
-    s.style.background = colors[i % colors.length];
-    if (i % 3 === 0) s.style.borderRadius = '50%';
-    fx.appendChild(s);
-    const ang = Math.random() * Math.PI * 2;
-    const dist = 80 + Math.random() * 160;
-    const dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist - 60;
-    s.animate([
-      { transform: 'translate(-50%,-50%) scale(1) rotate(0deg)', opacity: 1 },
-      { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy + 140}px)) scale(.6) rotate(${Math.random() * 720 - 360}deg)`, opacity: 0 }
-    ], { duration: 900 + Math.random() * 600, easing: 'cubic-bezier(.15,.8,.3,1)', fill: 'forwards' }).onfinish = () => s.remove();
-  }
-}
+function confetti(fromEl) { M.confetti(fromEl); }
 function ripple(row, e) {
   if (reduceMotion()) return;
   const r = row.getBoundingClientRect();
@@ -1153,9 +1125,7 @@ function ripple(row, e) {
 }
 function popEl(el) {
   if (!el) return;
-  el.classList.remove('pop');
-  void el.offsetWidth;
-  el.classList.add('pop');
+  M.pop(el);
 }
 
 /* ================= Планувальник ================= */
@@ -1718,6 +1688,7 @@ async function toggleTask(id, btn) {
   const row = btn.closest('.task');
   row?.classList.toggle('done', !t.done);
   popEl(btn);
+  if (!t.done) { M.burst(btn, { count: 8, radius: 26 }); M.nudge(row); }
   await patchTask(id, patch);
   const askNow = t.askNote && t.done;
   setTimeout(() => {
@@ -1841,7 +1812,7 @@ function sleepTap(h, date) {
 async function markSleepHabit(h, date, v) {
   await setMark(h.id, date, v);
   const row = currentView()?.querySelector(`.habit[data-id="${h.id}"]`);
-  if (row) { ripple(row); popEl(row.querySelector('.check')); updateTodayDynamic(row); } else rerender();
+  if (row) { ripple(row); popEl(row.querySelector('.check')); if (v > 0) M.burst(row.querySelector('.check')); updateTodayDynamic(row); } else rerender();
 }
 
 function openSleepTimeSheet(h, date) {
@@ -2117,6 +2088,7 @@ function renderSleep(el) {
     </div>
     </div>
     </div>`;
+  M.pulse(el.querySelector('.sl-line i.c'));
 }
 function openSleepLogSheet() {
   const rows = [];
@@ -2399,6 +2371,7 @@ function todayAllDone() {
 function celebrate(h, date, before, row) {
   if (!before.day && dayCounted(date)) {
     confetti(currentView().querySelector('.ring'));
+    M.glow(currentView().querySelector('[data-progress]'));
     toast(date === S.today ? 'День зараховано — ланцюжок росте' : 'День зараховано');
   } else if (!isDaily(h) && !before.week && weekMet(h, weekStart(date))) {
     confetti(row?.querySelector('.check') || currentView().querySelector('.ring'));
@@ -2445,7 +2418,7 @@ views.addEventListener('click', async (e) => {
     if (isCount(hb)) {
       openAmountSheet(hb, date, () => {
         const row = currentView()?.querySelector(`.habit[data-id="${id}"]`);
-        if (row) { ripple(row); popEl(row.querySelector('.check')); }
+        if (row) { ripple(row); popEl(row.querySelector('.check')); if (val(id, date) > 0) M.burst(row.querySelector('.check')); }
         updateTodayDynamic(row);
         celebrate(hb, date, before, row);
       });
@@ -2457,6 +2430,7 @@ views.addEventListener('click', async (e) => {
     ripple(t, e);
     popEl(t.querySelector('.check'));
     await setMark(id, date, v);
+    if (v > 0 && prevVal === 0) M.burst(t.querySelector('.check'));
     updateTodayDynamic(t);
     celebrate(hb, date, before, t);
     if (hb.askNote && prevVal === 0 && v > 0) setTimeout(() => openNoteSheet(hb, date, { afterMark: true }), 380);
@@ -2590,6 +2564,7 @@ views.addEventListener('click', async (e) => {
 });
 
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => {
+  M.tabBounce(b.querySelector('svg'));
   if (S.tab === b.dataset.tab) { currentView()?.scrollTo({ top: 0, behavior: 'smooth' }); return; }
   if (b.dataset.tab === 'today') S.selDate = S.today;
   if (b.dataset.tab === 'plan') { S.planDate = S.today; S.planMode = 'day'; S.calOffset = 0; }
