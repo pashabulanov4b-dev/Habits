@@ -1087,3 +1087,5 @@ small.warn:empty { display: none; }
   .wknav .icon-btn { width: 34px; height: 34px; background: none; border: 0; }
   .wknav .icon-btn[disabled] { opacity: .2; }
 }
+/* елементи екрана не стискаються, коли список довгий (інакше смужка з прокруткою зникає) */
+.view > *, .view .col > *, .wkpager { flex-shrink: 0; }
