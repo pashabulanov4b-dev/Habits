@@ -1005,8 +1005,7 @@ async function exportBackup() {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   return 'downloaded';
 }
-async function importBackup(file) {
-  const parsed = JSON.parse(await file.text());
+async function importBackup(parsed) {
   if (!parsed || parsed.app !== 'zvychky' || !parsed.data) throw new Error('Це не файл копії «Звичок»');
   const now = Date.now();
   let n = 0;
@@ -1017,6 +1016,101 @@ async function importBackup(file) {
     n += list.length;
   }
   return n;
+}
+
+/* ===== Імпорт завдань: JSON-список або просто текст (кожен рядок — завдання) =====
+   JSON: { "app": "zvychky", "kind": "tasks", "tasks": [ { "title", "date": "2026-10-30", "time": "13:00",
+           "endTime", "remindAt", "note", "important": true } ] }  — або просто масив таких об'єктів.
+   id обчислюється з дати й назви, тож повторний імпорт того самого файлу не створить дублікатів. */
+function importId(date, title) {
+  let h1 = 0x811c9dc5, h2 = 0;
+  const str = date + '|' + title.trim().toLowerCase();
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619) >>> 0;
+    h2 = (Math.imul(h2, 31) + c) >>> 0;
+  }
+  return 't-i' + h1.toString(36) + h2.toString(36);
+}
+function parseTaskList(text) {
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error('Порожньо — нічого імпортувати');
+  if (raw[0] === '{' || raw[0] === '[') {
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { throw new Error('Не вдалося прочитати JSON'); }
+    const list = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.tasks) ? parsed.tasks : null;
+    if (!list) throw new Error('У файлі немає списку завдань');
+    return list;
+  }
+  // Звичайний текст: «- [ ] Забрати плакат», «• Ключі», «1. Колонка». Рядки-заголовки (**Бар**, # …) пропускаємо.
+  return raw.split(/\r?\n/).map((l) => l.trim())
+    .filter((l) => l && !/^(#|\*\*[^*]+\*\*$)/.test(l))
+    .map((l) => ({ title: l.replace(/^([-*•–]\s*)?(\[[ xх]?\]\s*)?(\d+[.)]\s*)?/i, '').replace(/\*\*/g, '').trim() }))
+    .filter((t) => t.title);
+}
+const isTasksPayload = (p) => Array.isArray(p) || (p && p.kind === 'tasks' && Array.isArray(p.tasks));
+async function importTasks(list, defDate = S.today) {
+  const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const now = Date.now();
+  let order = S.tasks.concat(S.rules).reduce((m, x) => Math.max(m, x.order || 0), 0);
+  const recs = [];
+  let skipped = 0;
+  for (const it of list) {
+    const title = String((it && it.title) || '').trim().slice(0, 120);
+    if (!title) continue;
+    const date = DATE.test(it.date || '') ? it.date : defDate;
+    const id = importId(date, title);
+    if (S.taskIds.has(id) || recs.some((r) => r.id === id)) { skipped++; continue; }
+    const time = TIME.test(it.time || '') ? it.time : '';
+    const endTime = time && TIME.test(it.endTime || '') && it.endTime > time ? it.endTime : '';
+    const remindAt = TIME.test(it.remindAt || '') ? it.remindAt : '';
+    recs.push({ id, title, date, time, endTime, remind: !!remindAt, remindAt, note: String(it.note || '').slice(0, 500),
+      askNote: !!it.askNote, important: !!it.important, done: false, doneNote: '', jAt: 0, rule: '', repeat: [],
+      order: ++order, createdAt: now, updatedAt: now, deleted: false, dirty: true });
+  }
+  if (recs.length) {
+    await db.putMany('tasks', recs);
+    recs.forEach((r) => { S.tasks.push({ ...r }); S.taskIds.add(r.id); });
+    scheduleSync(300);
+  }
+  return { added: recs.length, skipped, remind: recs.some((r) => r.remind), first: recs[0] && recs[0].date };
+}
+async function runTaskImport(text, defDate) {
+  const res = await importTasks(parseTaskList(text), defDate);
+  if (!res.added) { toast(res.skipped ? 'Ці завдання вже є' : 'Не знайшов завдань'); return res; }
+  toast(`Додано завдань: ${res.added}` + (res.skipped ? ` · вже були: ${res.skipped}` : ''));
+  if (res.remind) ensureTaskPush().catch(() => {});
+  if (res.first) { S.planMode = 'day'; S.planDate = res.first; }
+  closeSheet();
+  setTimeout(() => { showTab('plan'); rerenderAnimated(); }, 250);
+  return res;
+}
+function openTaskImportSheet() {
+  openSheet(`
+    <h2>Імпорт завдань</h2>
+    <p class="sheet-sub" style="opacity:.7;margin:-4px 0 12px">Встав список від Claude (JSON) або просто текст — кожен рядок стане завданням ${esc(onDay(S.planDate >= S.today ? S.planDate : S.today))}.</p>
+    <textarea id="imp-text" class="note-input" rows="8" placeholder="- [ ] Забрати плакат&#10;- [ ] Знайти колонку" style="width:100%"></textarea>
+    <div class="row-actions">
+      <button class="btn block glass press" data-paste>Вставити з буфера</button>
+      <label class="btn block glass press" style="display:flex;align-items:center;justify-content:center">З файлу<input type="file" accept="application/json,.json,text/plain,.txt" data-file hidden></label>
+    </div>
+    <button class="btn block press" data-import style="margin-top:10px">Імпортувати</button>
+  `, (sheet) => {
+    const ta = sheet.querySelector('#imp-text');
+    const def = S.planDate >= S.today ? S.planDate : S.today;
+    sheet.querySelector('[data-paste]').addEventListener('click', async () => {
+      try { ta.value = await navigator.clipboard.readText(); } catch (e) { toast('Не вдалося прочитати буфер — встав вручну'); }
+    });
+    sheet.querySelector('[data-file]').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (f) ta.value = await f.text();
+      e.target.value = '';
+    });
+    sheet.querySelector('[data-import]').addEventListener('click', async () => {
+      try { await runTaskImport(ta.value, def); } catch (err) { toast(err.message || 'Не вдалося імпортувати'); }
+    });
+  });
 }
 
 async function openSettings() {
@@ -1037,8 +1131,10 @@ async function openSettings() {
     <div class="set-group">
       <div class="set-row"><div class="l"><b>Резервна копія</b><span>${lastBackup ? 'Остання — ' + esc(fmtDayMonth.format(new Date(lastBackup))) : 'Ще не робив'}</span></div>
         <button class="small-btn press" data-backup>Зберегти</button></div>
+      <div class="set-row"><div class="l"><b>Імпорт завдань</b><span>Список від Claude або текст — у планувальник</span></div>
+        <button class="small-btn press" data-task-import>Імпорт</button></div>
       <div class="set-row"><div class="l"><b>Відновити з файлу</b><span>Записи з файлу замінять ті самі записи тут</span></div>
-        <label class="small-btn press" style="display:inline-flex;align-items:center">Вибрати<input type="file" accept="application/json,.json" data-restore hidden></label></div>
+        <label class="small-btn press" style="display:inline-flex;align-items:center">Вибрати<input type="file" accept="application/json,.json,text/plain,.txt" data-restore hidden></label></div>
       <div class="set-row"><div class="l"><b>Синхронізація</b><span data-sync-text>${esc(syncText())}</span></div>
         <button class="small-btn press" data-sync-now>Зараз</button></div>
       <div class="set-row"><div class="l"><b>Код синхронізації</b><span class="code">${esc(uid)}</span></div>
@@ -1075,15 +1171,20 @@ async function openSettings() {
     sheet.querySelector('[data-restore]').addEventListener('change', async (e) => {
       const f = e.target.files && e.target.files[0];
       if (!f) return;
-      if (!confirm('Відновити дані з «' + f.name + '»?')) { e.target.value = ''; return; }
       try {
-        const n = await importBackup(f);
+        const text = await f.text();
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch (x) { /* не JSON — тоді це текстовий список завдань */ }
+        if (!parsed || isTasksPayload(parsed)) { await runTaskImport(text); e.target.value = ''; return; }
+        if (!confirm('Відновити дані з «' + f.name + '»?')) { e.target.value = ''; return; }
+        const n = await importBackup(parsed);
         await loadState(); await generateInstances();
         closeSheet(); toast(`Відновлено записів: ${n}`);
         rerenderAnimated(); scheduleSync(300);
       } catch (err) { toast(err.message || 'Файл не підходить'); }
       e.target.value = '';
     });
+    sheet.querySelector('[data-task-import]').addEventListener('click', () => { closeSheet(); setTimeout(openTaskImportSheet, 250); });
     sheet.querySelector('[data-sync-now]').addEventListener('click', () => syncNow({ onMerged: onServerMerge }));
     sheet.querySelector('[data-copy]').addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(uid); toast('Код скопійовано'); } catch (e) { toast('Не вдалося скопіювати'); }
